@@ -13,6 +13,14 @@ cd "$ROOT"
 BUILD=$ROOT/build/ios
 
 [ -f game/sh2pc.exe ] || { echo "game/sh2pc.exe not found: copy or link your game folder to game/ (docs/IOS.md)"; exit 1; }
+# The port is made for one build of the exe: the one the Enhanced Edition setup installs.
+WANT=3201a5e1029f3ae3b77770255dcbe10360b3cd09
+HAVE=$(shasum -a 1 game/sh2pc.exe | cut -d' ' -f1)
+if [ "$HAVE" != "$WANT" ]; then
+    echo "game/sh2pc.exe is not the one this port is built for (SHA-1 $HAVE, want $WANT)."
+    echo "Run the Enhanced Edition setup with the Enhanced Executable pack on your PC install, then copy it again (docs/IOS.md)."
+    exit 1
+fi
 if [ ! -x .venv/bin/python3 ]; then
     python3 -m venv .venv
     .venv/bin/pip install -q -r requirements.txt
