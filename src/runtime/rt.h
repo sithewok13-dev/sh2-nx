@@ -126,7 +126,7 @@ void controls_tick(void);                     /* game thread, every presented fr
 enum { SCREEN_PLAY, SCREEN_CUTSCENE, SCREEN_PAUSE, SCREEN_MENU, SCREEN_GAME_MENU, SCREEN_LOADING };
 int game_screen(void);                        /* game/controls.c: which screen the game is on (SCREEN_*) */
 int game_pause_tap(float y480);               /* a tap on the pause menu: its row picked (1) or nothing there (0) */
-int game_flashlight_on(void);                 /* game/controls.c: the flashlight is on */
+int game_flashlight_on(void);                 /* game/controls.c: 0 James has none yet, 1 off, 2 on */
 
 /* kernel32.c */
 void rt_thread_init_main(uint32_t stack_size);

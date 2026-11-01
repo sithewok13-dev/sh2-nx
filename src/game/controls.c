@@ -22,10 +22,14 @@ void controls_tick(void) {
     if (MEM8(CONTROL_TYPE) != want) MEM8(CONTROL_TYPE) = want;
 }
 
+#define FLASHLIGHT_HAD 0x01F7A7E0u  /* SH2EE's GetFlashLightAcquiredPointer: the inventory's bits, 0x40000 the flashlight (item 18) */
 /* The flashlight's switch, for the touch overlay's LIGHT picture: the byte at 0x1F7A806 (SH2EE's
  * GetFlashlightSwitchPointer: 0x29 bytes past the pattern at 0x43ED25), flipped by the light's button
  * (sub_0048E800) and set at a new game (sub_0049EE10). */
-int game_flashlight_on(void) { return MEM8(0x01F7A806u) != 0; }
+int game_flashlight_on(void) {
+    if (!(MEM32(FLASHLIGHT_HAD) & 0x40000)) return 0;  /* not had yet: the switch is on from a new game anyway */
+    return MEM8(0x01F7A806u) ? 2 : 1;
+}
 
 /* ---- which screen the game is on, for the touch overlay (touch.c) ----
  * The addresses are SH2EE's (Patches/Common.cpp), found in this exe by the same byte patterns:
@@ -38,9 +42,11 @@ int game_flashlight_on(void) { return MEM8(0x01F7A806u) != 0; }
 #define EVENT_INDEX 0x00932178u
 #define CUTSCENE_ID 0x01F7A7C4u
 #define QUIT_FLAG   0x00932030u
+#define TRANSITION  0x01F7D490u  /* fading (GetTransitionStatePointer: 0 none, 1 to black, 2 black, 3 from black) */
 #define PAUSE_ROW   0x009326B4u  /* the operand of the `mov eax, [..]` 0x10 past the pattern at 0x407497 */
 
 int game_screen(void) {
+    if (MEM32(TRANSITION)) return SCREEN_LOADING;  /* fading out, black, or fading in: nothing to touch yet */
     switch (MEM8(EVENT_INDEX)) {
     case 4: return MEM32(CUTSCENE_ID) ? SCREEN_CUTSCENE : SCREEN_PLAY;
     case 15: return SCREEN_CUTSCENE;
