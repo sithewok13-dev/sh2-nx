@@ -10,6 +10,7 @@
 #include <SDL2/SDL.h>
 #include <sys/stat.h>
 #include <ctype.h>
+#include <stdbool.h>  /* bool is a keyword only from C23; Apple clang defaults to C17 */
 #include "../runtime/host.h"
 #include "ee_sfx.h"
 #include <libavcodec/avcodec.h>
