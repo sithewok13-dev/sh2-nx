@@ -122,20 +122,23 @@ static void frame_rate_tick(void) {
     if (!frame_rate) return;
     uint64_t freq = (uint64_t)MEM32(QPC_FREQ) | (uint64_t)MEM32(QPC_FREQ + 4) << 32;
     if (!freq) return;  /* not started yet */
-    uint64_t want = freq / frame_rate;
+    /* The map screen runs at 30: its marking animation (a new map's notes drawn on) counts frames, and EE's fix for
+     * it (MapTranscription) rewrites its state handler; a still screen loses nothing at 30. */
+    int rate = MEM8(EVENT_INDEX) == 5 ? 30 : frame_rate;
+    uint64_t want = freq / rate;
     MEM32(FRAME_INTERVAL) = (uint32_t)want;
     MEM32(FRAME_INTERVAL + 4) = (uint32_t)(want >> 32);
     if (!speeds_kept) {
         for (unsigned i = 0; i < sizeof speeds / sizeof *speeds; i++) speeds_orig[i] = MEMF(speeds[i].va);
         speeds_kept = 1;
     }
-    if (speeds_rate != frame_rate) {
+    if (speeds_rate != rate) {
         for (unsigned i = 0; i < sizeof speeds / sizeof *speeds; i++)
-            MEMF(speeds[i].va) = frame_rate == 60 ? speeds[i].sixty : speeds_orig[i];
-        sixty_vars(frame_rate == 60);
-        rt_log("controls: %d fps", frame_rate);
-        speeds_rate = frame_rate;
+            MEMF(speeds[i].va) = rate == 60 ? speeds[i].sixty : speeds_orig[i];
+        sixty_vars(rate == 60);
+        rt_log("controls: %d fps", rate);
+        speeds_rate = rate;
     }
 }
 
-int game_frame_rate(void) { return frame_rate ? frame_rate : 30; }  /* for the code hooks (ee.c) */
+int game_frame_rate(void) { return speeds_rate ? speeds_rate : 30; }  /* as running now (30 on the map) */  /* for the code hooks (ee.c) */
