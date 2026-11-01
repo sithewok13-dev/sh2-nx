@@ -85,6 +85,20 @@ static int frame_rate;  /* 0: leave the game's own */
 
 void game_set_frame_rate(int fps) { frame_rate = fps == 60 || fps == 30 ? fps : 0; }
 
+/* The Enhanced Edition's 60 fps fixes that are speeds in the game's data (SH2EE Patches/SixtyFPSPatch.cpp, the
+ * addresses found by its byte patterns in this exe): at 60 fps EE's value, at 30 the game's own (kept as the
+ * game starts). The rest (fog, bullet shells, timers...) are hooks in the code. */
+static const struct { uint32_t va; float sixty; const char *what; } speeds[] = {
+    {0x006BC194u, 0.0166665f, "water"},                      /* GetWaterAnimationSpeedPointer */
+    {0x007F3E10u, 0.0166665f, "low health flash"},           /* GetLowHealthIndicatorFlashSpeedPointer */
+    {0x0070AE40u, 0.00027777222565f, "staircase flames"},    /* GetStaircaseFlamesLightingPointer */
+    {0x0089C1A4u, 20.0f, "water level lowering"},            /* GetWaterLevelLoweringStepsPointer */
+    {0x006BC1F4u, 5.333333492f, "water level rising"},       /* GetWaterLevelRisingStepsPointer */
+    {0x006C10A8u, 0.093333332985f, "bug room flashlight"},   /* GetBugRoomFlashlightFixPointer */
+};
+static float speeds_orig[sizeof speeds / sizeof *speeds];
+static int speeds_kept, speeds_rate;
+
 static void frame_rate_tick(void) {
     if (!frame_rate) return;
     uint64_t freq = (uint64_t)MEM32(QPC_FREQ) | (uint64_t)MEM32(QPC_FREQ + 4) << 32;
@@ -92,4 +106,16 @@ static void frame_rate_tick(void) {
     uint64_t want = freq / frame_rate;
     MEM32(FRAME_INTERVAL) = (uint32_t)want;
     MEM32(FRAME_INTERVAL + 4) = (uint32_t)(want >> 32);
+    if (!speeds_kept) {
+        for (unsigned i = 0; i < sizeof speeds / sizeof *speeds; i++) speeds_orig[i] = MEMF(speeds[i].va);
+        speeds_kept = 1;
+    }
+    if (speeds_rate != frame_rate) {
+        for (unsigned i = 0; i < sizeof speeds / sizeof *speeds; i++)
+            MEMF(speeds[i].va) = frame_rate == 60 ? speeds[i].sixty : speeds_orig[i];
+        rt_log("controls: %d fps", frame_rate);
+        speeds_rate = frame_rate;
+    }
 }
+
+int game_frame_rate(void) { return frame_rate ? frame_rate : 30; }  /* for the code hooks (ee.c) */
