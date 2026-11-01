@@ -10,6 +10,7 @@ Usage: patch_exe.py game/sh2pc.exe build/sh2pc_ee.exe
 import struct, sys
 sys.path.insert(0, __import__('os').path.dirname(__file__))
 from ws_patches import widescreen_patches
+from caves.caves import CAVES   # tools/caves/*.asm, assembled by tools/caves/build.sh
 
 BASE = 0x400000
 CAVE_SEARCH_CAMERA = 0x401460   # ee.c: StartSearchCamera_Hook
@@ -24,6 +25,13 @@ ANIMATION_RATE = 0x447830       # the game's animation rate (EE's GetFogAnimatio
 CAVE_HOLD_DAMAGE = 0x4012A0     # ee.c: hold damage scaled by the frame time (EE PatchHoldDamage)
 CAVE_PRISONER = 0x4012A8        # ee.c: the prisoner timer doubled at 60 fps (EE PatchPrisonerTimer)
 CAVE_FLASHLIGHT_ON = 0x4012B0   # ee.c: the flashlight's switch-on time, 60 or 120 frames (EE PatchFlashlightOnSpeed)
+# Guest variables the 60 fps caves read (game/controls.c keeps them; ee_init gives them the 30 fps values first)
+SPRAY_SPEED_VARS = 0x0EC02010   # five floats, see SPRAY_SPEEDS
+
+
+def cave(name, label=None):
+    org, code, syms = CAVES[name]
+    return syms[label] if label else org
 PLAY_SOUND = 0x515580           # the game's play-sound-effect function
 # EE TexPatch buffers, in guest memory between the image and the heap (0x2500000-0x10000000):
 # 2x and 4x the largest texture file (22,380,640 bytes, sh2e/pic/map), as EE sizes them.
@@ -200,6 +208,29 @@ PATCHES = [
     (CAVE_FLASHLIGHT_ON, b'\xCC' * 4, b'\xC3\xCC\xCC\xCC', 'cave: flashlight on speed'),
     (0x50A5B6, bytes.fromhex('66c7058aff89003c00'), call(0x50A5B6, CAVE_FLASHLIGHT_ON) + b'\x90' * 4,
      '60 fps: flashlight switch-on time'),
+    # -- assembled caves (tools/caves): written over int3 padding
+    *((org, b'\xCC' * len(code), code, 'cave: ' + name) for name, (org, code, syms) in CAVES.items()),
+    # -- DoubleFootstepFix: James's and Maria's footstep handlers jump to the cave at their first footstep read
+    (0x54B330, bytes.fromhex('0fbe44f411'), jmp(0x54B330, cave('footstep', 'james')), '60 fps: James double footstep'),
+    (0x549715, bytes.fromhex('0fbe44f409'), jmp(0x549715, cave('footstep', 'maria')), '60 fps: Maria double footstep'),
+    # -- SprayEffect spawn rate: each spawner's `push esi; push 5; push handler` jumps to its stub
+    (0x4A4A10, bytes.fromhex('566a0568c03e4a00'), jmp(0x4A4A10, cave('spray', 'lying')) + b'\x90' * 3,
+     '60 fps: Lying Figure spray spawn rate'),
+    (0x4A5090, bytes.fromhex('566a0568f0434a00'), jmp(0x4A5090, cave('spray', 'hyper')) + b'\x90' * 3,
+     '60 fps: hyper spray spawn rate'),
+    # -- SprayEffect speeds: the operands of the spray's `fmul dword [factor]` read guest variables instead of the
+    # game's constants (SPRAY_SPEEDS)
+    *((va, p32(orig), p32(SPRAY_SPEED_VARS + 4 * var), '60 fps: spray speed ' + why) for va, orig, var, why in (
+        (0x4A40F2, 0x63348C, 0, 'Lying Figure state 0'),
+        (0x4A4029, 0x62BF7C, 1, 'Lying Figure state 1'),
+        (0x4A4062, 0x6A91EC, 4, 'Lying Figure state 1, height'),
+        (0x4A3F24, 0x69F3F0, 2, 'Lying Figure state 2'),
+        (0x4A3F5D, 0x6A91EC, 4, 'Lying Figure state 2, height'),
+        (0x4A4585, 0x69F3F0, 2, 'hyper spray state 0'),
+        (0x4A44FF, 0x69F3F0, 2, 'hyper spray state 1'),
+        (0x4A4523, 0x6A91EC, 4, 'hyper spray state 1, height'),
+        (0x4A443B, 0x62FE1C, 3, 'hyper spray state 2'),
+        (0x4A445F, 0x6A91EC, 4, 'hyper spray state 2, height'))),
 ]
 
 

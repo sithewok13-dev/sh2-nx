@@ -669,6 +669,7 @@ void sub_00401288(void) {
 void ee_init(void) {
     host_arena_commit(TEX_BUF1, TEX_BUF3 + 2 * TEX_SIZE - TEX_BUF1);
     host_arena_commit(TITLE_PATHS, 0x10000);
+    game_sixty_init();  /* the 60 fps caves' variables, at their 30 fps values (game/controls.c) */
     ee_sfx_init();
     ee_widescreen_init();
     ee_extra_sounds_init();

@@ -96,6 +96,26 @@ static const struct { uint32_t va; float sixty; const char *what; } speeds[] = {
     {0x006C10A8u, 0.093333332985f, "bug room flashlight"},   /* GetBugRoomFlashlightFixPointer */
 };
 static float speeds_orig[sizeof speeds / sizeof *speeds];
+
+/* The spray's speed factors (EE SprayEffect): tools/patch_exe.py points the spray's `fmul dword [factor]` operands
+ * at these guest variables; each holds the game's constant at 30 fps and EE's value at 60. RATE60 is the byte the
+ * assembled caves (tools/caves: footsteps, spray spawn rate) test. */
+#define RATE60      0x0EC02000u
+#define SPRAY_VARS  0x0EC02010u
+static const struct { uint32_t orig; float sixty; } spray[] = {
+    {0x0063348Cu, 0.1f},    /* Lying Figure state 0 (0.2 at 30) */
+    {0x0062BF7Cu, 0.125f},  /* Lying Figure state 1 (0.25) */
+    {0x0069F3F0u, 0.15f},   /* Lying Figure state 2, hyper spray states 0 and 1 (0.3) */
+    {0x0062FE1Cu, 0.25f},   /* hyper spray state 2 (0.5) */
+    {0x006A91ECu, 50.0f},   /* the height adjustment (100) */
+};
+static void sixty_vars(int sixty) {
+    for (unsigned i = 0; i < sizeof spray / sizeof *spray; i++)
+        MEMF(SPRAY_VARS + 4 * i) = sixty ? spray[i].sixty : MEMF(spray[i].orig);
+    MEM8(RATE60) = (uint8_t)sixty;
+}
+/* ee_init, on every platform (its page is committed there): the game as it was, until RATE says 60. */
+void game_sixty_init(void) { sixty_vars(0); }
 static int speeds_kept, speeds_rate;
 
 static void frame_rate_tick(void) {
@@ -112,6 +132,7 @@ static void frame_rate_tick(void) {
     if (speeds_rate != frame_rate) {
         for (unsigned i = 0; i < sizeof speeds / sizeof *speeds; i++)
             MEMF(speeds[i].va) = frame_rate == 60 ? speeds[i].sixty : speeds_orig[i];
+        sixty_vars(frame_rate == 60);
         rt_log("controls: %d fps", frame_rate);
         speeds_rate = frame_rate;
     }
