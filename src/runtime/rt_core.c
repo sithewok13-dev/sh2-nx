@@ -4,6 +4,9 @@
 #include <pthread.h>
 #include <unistd.h>
 #include "host.h"
+#ifdef SH2_IOS
+#include <SDL2/SDL.h>  /* its SDL_main.h renames main(): SDL's UIKit app delegate calls it on the main thread */
+#endif
 #ifdef __SWITCH__
 #include <switch.h>
 #include <netinet/in.h>  /* __nxlink_host */
@@ -50,8 +53,8 @@ void rt_log(const char *fmt, ...) {
     vfprintf(stderr, fmt, ap);
     va_end(ap);
     fputc('\n', stderr);
-#ifdef __SWITCH__
-    static FILE *log;  /* no console on the Switch: sh2.log in the game folder */
+#if defined(__SWITCH__) || defined(SH2_IOS)
+    static FILE *log;  /* no console on the Switch or a phone: sh2.log in the game folder */
     if (!log) log = fopen("sh2.log", "w");
     if (log) {
         va_start(ap, fmt);
@@ -146,7 +149,11 @@ uint32_t galloc(uint32_t size) {
     uint32_t blk = free_head[cls];
     if (blk) free_head[cls] = ((BlockHdr *)GPTR(blk))->pad;  /* the free list links through the header */
     else {
-        if ((uint64_t)heap_top + (1ull << cls) > HEAP_HI) rt_fatal("guest heap exhausted (%u bytes)", size);
+        /* The heap ends where the arena does: below 4 GB where the platform would not reserve it all (iOS). */
+        uint64_t hi = host_arena_bytes < HEAP_HI ? host_arena_bytes : HEAP_HI;
+        if ((uint64_t)heap_top + (1ull << cls) > hi)
+            rt_fatal("guest heap exhausted (%u bytes asked, %u MB used, arena %u MB)", size, (heap_top - HEAP_LO) >> 20,
+                     (unsigned)(host_arena_bytes >> 20));
         blk = heap_top;
         heap_top += 1u << cls;
         if (heap_top > heap_committed) {
@@ -414,10 +421,9 @@ void recomp_cpuid(void) {
 /* ---- loading sh2pc.exe at its own addresses ---- */
 static uint32_t rd32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
 
-extern const Bridge __start_sh2_bridges[], __stop_sh2_bridges[];
 
 static recomp_func_t find_bridge(const char *name) {
-    for (const Bridge *b = __start_sh2_bridges; b < __stop_sh2_bridges; b++)
+    for (const Bridge *b = rt_bridges_begin; b < rt_bridges_end; b++)
         if (!strcmp(b->name, name)) return b->fn;
     return NULL;
 }
@@ -498,6 +504,9 @@ int main(int argc, char **argv) {
         else socketExit();
     }
 #endif
+#elif defined(SH2_IOS)
+    const char *dir = ios_game_dir();  /* Documents: filled through the Files app */
+    (void)argc; (void)argv;            /* rt_log writes sh2.log there: a phone has no console to read */
 #else
     const char *dir = argc > 1 ? argv[1] : getenv("SH2_DIR");
 #endif
@@ -517,10 +526,17 @@ int main(int argc, char **argv) {
     if (getenv("SH2_ORACLE")) sscanf(getenv("SH2_ORACLE"), "%x,%u", &oracle_va, &oracle_nth);
 #endif
 
+#ifdef SH2_IOS
+    ios_main_start();             /* window and GL context belong to the main thread on iOS */
+    ios_require_file("sh2pc.exe");
+#endif
     host_crash_handlers(on_crash);
     arena_init();
     recomp_dispatch_init();
     load_exe("sh2pc.exe");
     host_thread_start(game_thread, NULL, 16u << 20);
+#ifdef SH2_IOS
+    ios_main_loop();
+#endif
     for (;;) sleep(1000);
 }

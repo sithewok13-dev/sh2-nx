@@ -21,8 +21,19 @@ static inline uint32_t GVA(const void *p) {
  * CDECL(cname, "export"): the caller pops the arguments.
  * The body reads ARG(i) and returns EAX. */
 typedef struct Bridge { const char *name; void (*fn)(void); } Bridge;
+/* The records sit together in one section, which the linker brackets with start and end symbols: ELF's
+ * __start_/__stop_, Mach-O's section$start$/section$end$ (Apple platforms). */
+#ifdef __APPLE__
+#define BRIDGE_SECTION "__DATA,sh2_bridges"
+extern const Bridge rt_bridges_begin[] __asm("section$start$__DATA$sh2_bridges");
+extern const Bridge rt_bridges_end[] __asm("section$end$__DATA$sh2_bridges");
+#else
+#define BRIDGE_SECTION "sh2_bridges"
+extern const Bridge rt_bridges_begin[] __asm("__start_sh2_bridges");
+extern const Bridge rt_bridges_end[] __asm("__stop_sh2_bridges");
+#endif
 #define BRIDGE_REG(cname, ename) \
-    static const Bridge cname##_reg __attribute__((used, section("sh2_bridges"), aligned(8))) = { ename, cname }
+    static const Bridge cname##_reg __attribute__((used, section(BRIDGE_SECTION), aligned(8))) = { ename, cname }
 #define WINAPI(cname, ename, n) \
     static uint32_t cname##_impl(void); \
     static void cname(void) { uint32_t _r = cname##_impl(); g_eax = _r; g_esp += 4 + 4 * (n); } \
@@ -76,6 +87,19 @@ int rt_format(char *out, size_t n, const char *fmt, uint32_t args);
 extern struct SDL_Window *rt_window;
 void rt_pump_events(void);
 void rt_window_open(void);
+/* SDL_PollEvent, except on iOS, where the main thread pumps and the game thread only takes what it queued. */
+union SDL_Event;
+int rt_poll_event(union SDL_Event *e);
+
+/* ios.c (SH2_IOS): the main thread opens the window and pumps events, the game runs on its own thread. */
+#ifdef SH2_IOS
+const char *ios_game_dir(void);
+void ios_require_file(const char *name);
+void ios_main_start(void);
+_Noreturn void ios_main_loop(void);
+void ios_frame_gate(void);
+void ios_screen_size(int *w, int *h);
+#endif
 
 /* kernel32.c */
 void rt_thread_init_main(uint32_t stack_size);

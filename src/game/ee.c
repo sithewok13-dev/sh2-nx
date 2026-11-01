@@ -248,11 +248,31 @@ static void ee_widescreen_init(void) {
     uint32_t w = 1920, h = 1080;
     FILE *f = fopen("sh2e.ini", "r");
     char line[128];
+#ifdef SH2_IOS
+    int screen = 1;  /* "resolution = screen", the default on a phone: see below */
+#endif
     while (f && fgets(line, sizeof line, f)) {
         unsigned a, b;
-        if (sscanf(line, " resolution = %ux%u", &a, &b) == 2 && a >= 320 && b >= 240 && a <= 1920 && b <= 1440) w = a, h = b;
+        if (sscanf(line, " resolution = %ux%u", &a, &b) == 2 && a >= 320 && b >= 240 && a <= 1920 && b <= 1440) {
+            w = a, h = b;
+#ifdef SH2_IOS
+            screen = 0;
+#endif
+        }
     }
     if (f) fclose(f);
+#ifdef SH2_IOS
+    /* The phone's own shape (19.5:9 on most iPhones) at the widest the game is run at, 1920: the image fills
+     * the screen with no bars, and Present scales it to the panel's full pixel resolution. */
+    int sw, sh;
+    ios_screen_size(&sw, &sh);
+    if (screen && sw > 0 && sh > 0) {
+        w = sw < 1920 ? (uint32_t)sw : 1920;
+        h = ((uint32_t)((uint64_t)w * sh / sw) + 1) & ~1u;
+        if (h < 240) h = 240;
+        rt_log("ee: resolution follows the %dx%d screen: %ux%u", sw, sh, w, h);
+    }
+#endif
     ee_res_w = w;
     ee_res_h = h;
     float fw = w, fh = h, aspect = fw / fh, w43 = (int32_t)(fh * (4.0f / 3.0f));

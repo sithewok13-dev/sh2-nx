@@ -1,4 +1,4 @@
-/* Platform layer (host.c): Linux and Horizon. */
+/* Platform layer (host.c): Linux, iOS and Horizon. */
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -18,6 +18,7 @@ void host_thread_signal(HostThread *t, int sig);  /* Linux debugging (SH2_DUMP_A
 int host_console_docked(void);  /* the Switch in its dock (1) or handheld (0); Linux: 0 with SH2_HANDHELD set */
 
 void *host_arena_reserve(void);                     /* 4 GB of address space for the guest */
+extern uint64_t host_arena_bytes;  /* how much of it host_arena_reserve got: 4 GB except on iOS, which may give less */
 void host_arena_commit(uint32_t va, uint32_t len);  /* backs [va, va+len) with zeroed memory */
 void host_crash_handlers(void (*on_crash)(uintptr_t addr));
 void host_backtrace(int fd);  /* host frames, where the platform can name them */
