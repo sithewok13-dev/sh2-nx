@@ -90,7 +90,6 @@ void game_set_frame_rate(int fps) { frame_rate = fps == 60 || fps == 30 ? fps : 
  * game starts). The rest (fog, bullet shells, timers...) are hooks in the code. */
 static const struct { uint32_t va; float sixty; const char *what; } speeds[] = {
     {0x006BC194u, 0.0166665f, "water"},                      /* GetWaterAnimationSpeedPointer */
-    {0x007F3E10u, 0.0166665f, "low health flash"},           /* GetLowHealthIndicatorFlashSpeedPointer */
     {0x0070AE40u, 0.00027777222565f, "staircase flames"},    /* GetStaircaseFlamesLightingPointer */
     {0x0089C1A4u, 20.0f, "water level lowering"},            /* GetWaterLevelLoweringStepsPointer */
     {0x006BC1F4u, 5.333333492f, "water level rising"},       /* GetWaterLevelRisingStepsPointer */
