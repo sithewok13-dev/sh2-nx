@@ -78,7 +78,7 @@ jobs:
           python3 -m venv .venv > /dev/null
           .venv/bin/pip install -q -r requirements.txt > /dev/null
           ln -s ../game game
-          tools/regen.sh > ../regen.log 2>&1 || { echo "::error::the generator failed"; grep -iE "error|Traceback" ../regen.log | grep -v "recomp/gen" | head -20; exit 1; }
+          tools/regen.sh > ../regen.log 2>&1 || { echo "::error::the generator failed"; grep -iE "error|Traceback| expected | overlaps " ../regen.log | grep -v "recomp/gen" | sed -E 's/ expected .*/: the game bytes there differ/' | head -20; exit 1; }
           rm ../game/sh2pc.exe
           echo "generated $(ls src/recomp/gen | wc -l | tr -d ' ') files"
 
