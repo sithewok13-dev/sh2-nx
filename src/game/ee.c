@@ -429,10 +429,12 @@ void sub_004012B0(void) {
     MEM16(0x0089FF8Au) = game_frame_rate() == 60 ? 120 : 60;
     g_esp += 4;
 }
-/* EE PatchHoldDamage: `fsub dword [esi+0x11C]` (an enemy's hold damage, every frame) as damage * 30 * the frame
- * time (0xA33360, kept by the frame limiter): unchanged at 30 fps, half a frame's worth at 60. */
+/* EE PatchHoldDamage: `fsub dword [esi+0x11C]` (an enemy's hold damage, every frame) as damage * 30 * the delta
+ * time (0x447830, as EE calls it): unchanged at 30 fps, half a frame's worth at 60. */
 void sub_004012A0(void) {
-    ST(0) = ST(0) - (double)MEMF(0x00A33360u) * 30.0f * MEMF(g_esi + 0x11C);
+    guest_call(0x00447830u, 0, NULL, 0);  /* EE's delta time function (GetDeltaTimeFunctionPointer): onto st(0) */
+    double dt = rt_fpop();
+    ST(0) = ST(0) - dt * 30.0f * MEMF(g_esi + 0x11C);
     g_esp += 4;
 }
 void sub_00401298(void) { animation_rate(2.0f); }
