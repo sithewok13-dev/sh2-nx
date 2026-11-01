@@ -198,7 +198,7 @@ PATCHES = [
     # -- PatchFlashlightOnSpeed: `mov word [0x89FF8A], 60` (frames to switch the flashlight on) becomes a call to a
     # cave that writes 120 at 60 fps.
     (CAVE_FLASHLIGHT_ON, b'\xCC' * 4, b'\xC3\xCC\xCC\xCC', 'cave: flashlight on speed'),
-    (0x50A5B3, bytes.fromhex('66c7058aff89003c00'), call(0x50A5B3, CAVE_FLASHLIGHT_ON) + b'\x90' * 4,
+    (0x50A5B6, bytes.fromhex('66c7058aff89003c00'), call(0x50A5B6, CAVE_FLASHLIGHT_ON) + b'\x90' * 4,
      '60 fps: flashlight switch-on time'),
 ]
 
