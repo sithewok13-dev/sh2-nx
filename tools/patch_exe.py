@@ -19,6 +19,8 @@ CAVE_TITLE_LANG = 0x401D60      # ee.c: MainMenuTitleASM
 CAVE_MAP = 0x401240             # eight bytes apart: ee.c map hooks (EE PatchMapImages)
 CAVE_SFX = 0x401268             # eight bytes apart: ee.c load / save / pause confirm sounds (EE PatchCustomSFXs)
 CAVE_FONT = 0x401280            # eight bytes apart: ee.c font texture size, font glyph (EE PatchCustomFonts)
+CAVE_RATE = 0x401290            # eight bytes apart: ee.c animation rate halved / doubled at 60 fps (EE SixtyFPSPatch)
+ANIMATION_RATE = 0x447830       # the game's animation rate (EE's GetFogAnimationRate), scaled by the frame time
 PLAY_SOUND = 0x515580           # the game's play-sound-effect function
 # EE TexPatch buffers, in guest memory between the image and the heap (0x2500000-0x10000000):
 # 2x and 4x the largest texture file (22,380,640 bytes, sh2e/pic/map), as EE sizes them.
@@ -163,6 +165,20 @@ PATCHES = [
     # -- FixFMVSpeed (EE FMVPatches): the movie loop no longer waits for the 30 Hz frame limiter, so the
     # Bink clock paces the video; the 60 fps videos of the FMV pack played at half speed.
     (0x43DD90, call(0x43DD90, FRAME_LIMITER), b'\x90' * 5, 'FMV speed: movie loop without the 30 Hz limiter'),
+    # -- PatchSixtyFPS (EE SixtyFPSPatch.cpp): these callers of the animation rate run too fast or slow at 60 fps;
+    # each goes through a cave that halves or doubles it while the game runs at 60 (ee.c reads the frame rate,
+    # so RATE 30 in the touch tray leaves them as they were).
+    *((CAVE_RATE + 8 * i, b'\xCC' * 4, b'\xC3\xCC\xCC\xCC', 'cave: animation rate') for i in range(2)),
+    *((va, call(va, ANIMATION_RATE), call(va, CAVE_RATE + 8 * double), why) for va, double, why in (
+        (0x489120, 0, '60 fps: fog animation, halved'),
+        (0x489E8B, 1, '60 fps: meat locker fog one, doubled'),
+        (0x489E9C, 0, '60 fps: meat locker fog two, halved'),
+        (0x4B2426, 0, '60 fps: meat locker hanger one, halved'),
+        (0x4B2494, 1, '60 fps: meat locker hanger two, doubled'),
+        (0x4F0EF5, 1, '60 fps: bullet shell animation one, doubled'),
+        (0x4F0EAC, 1, '60 fps: bullet shell animation two, doubled'),
+        (0x4F0F12, 1, '60 fps: bullet shell animation three, doubled'),
+        (0x4F0F23, 1, '60 fps: bullet shell animation four, doubled'))),
 ]
 
 

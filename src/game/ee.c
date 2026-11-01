@@ -410,6 +410,16 @@ static int map_texture(void) {
         if (ee_texture_list[i].map && !strcmp(ee_texture_list[i].name, (const char *)GPTR(p))) return 1;
     return 0;
 }
+/* EE SixtyFPSPatch: the animation rate (0x447830) as some callers want it at 60 fps (tools/patch_exe.py
+ * CAVE_RATE): halved at 0x401290, doubled at 0x401298; unchanged at 30 fps. */
+static void animation_rate(float k) {
+    guest_call(0x00447830u, 0, NULL, 0);
+    if (game_frame_rate() == 60) ST(0) = (float)(ST(0) * k);
+    g_esp += 4;
+}
+void sub_00401290(void) { animation_rate(0.5f); }
+void sub_00401298(void) { animation_rate(2.0f); }
+
 void sub_00401240(void) {  /* map marking x: fmul [0.0625], then / (1 / aspect) */
     ST(0) = (float)(ST(0) * 0.0625f);
     ST(0) = (float)(ST(0) / (1.0f / map_aspect));
