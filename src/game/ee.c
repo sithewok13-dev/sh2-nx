@@ -418,6 +418,12 @@ static void animation_rate(float k) {
     g_esp += 4;
 }
 void sub_00401290(void) { animation_rate(0.5f); }
+/* EE PatchHoldDamage: `fsub dword [esi+0x11C]` (an enemy's hold damage, every frame) as damage * 30 * the frame
+ * time (0xA33360, kept by the frame limiter): unchanged at 30 fps, half a frame's worth at 60. */
+void sub_004012A0(void) {
+    ST(0) = ST(0) - (double)MEMF(0x00A33360u) * 30.0f * MEMF(g_esi + 0x11C);
+    g_esp += 4;
+}
 void sub_00401298(void) { animation_rate(2.0f); }
 
 void sub_00401240(void) {  /* map marking x: fmul [0.0625], then / (1 / aspect) */

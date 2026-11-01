@@ -21,6 +21,7 @@ CAVE_SFX = 0x401268             # eight bytes apart: ee.c load / save / pause co
 CAVE_FONT = 0x401280            # eight bytes apart: ee.c font texture size, font glyph (EE PatchCustomFonts)
 CAVE_RATE = 0x401290            # eight bytes apart: ee.c animation rate halved / doubled at 60 fps (EE SixtyFPSPatch)
 ANIMATION_RATE = 0x447830       # the game's animation rate (EE's GetFogAnimationRate), scaled by the frame time
+CAVE_HOLD_DAMAGE = 0x4012A0     # ee.c: hold damage scaled by the frame time (EE PatchHoldDamage)
 PLAY_SOUND = 0x515580           # the game's play-sound-effect function
 # EE TexPatch buffers, in guest memory between the image and the heap (0x2500000-0x10000000):
 # 2x and 4x the largest texture file (22,380,640 bytes, sh2e/pic/map), as EE sizes them.
@@ -179,6 +180,11 @@ PATCHES = [
         (0x4F0EAC, 1, '60 fps: bullet shell animation two, doubled'),
         (0x4F0F12, 1, '60 fps: bullet shell animation three, doubled'),
         (0x4F0F23, 1, '60 fps: bullet shell animation four, doubled'))),
+    # -- PatchHoldDamage: an enemy's hold attack (Flesh Lips, Abstract Daddy, the last boss) takes its damage every
+    # frame; `fsub dword [esi+0x11C]` becomes a call that takes damage * 30 * the frame time: the same at 30 fps,
+    # half a frame's worth at 60.
+    (CAVE_HOLD_DAMAGE, b'\xCC' * 4, b'\xC3\xCC\xCC\xCC', 'cave: hold damage'),
+    (0x5359E1, bytes.fromhex('d8a61c010000'), call(0x5359E1, CAVE_HOLD_DAMAGE) + b'\x90', '60 fps: hold damage by frame time'),
 ]
 
 
