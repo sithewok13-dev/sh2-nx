@@ -37,3 +37,5 @@ jobs:
         run: CC=clang tests/run-touch-test.sh
       - name: The game-file importer unpacks zips
         run: CC=clang tests/run-unzip-test.sh
+      - name: Exe patches do not overlap
+        run: tests/run-patch-test.sh

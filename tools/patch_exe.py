@@ -234,9 +234,18 @@ PATCHES = [
 ]
 
 
+def overlaps(patches):
+    # two patches writing the same bytes: the second would find the first's bytes, not the game's
+    spans = sorted((va, va + max(len(old), len(new)), why) for va, old, new, why in patches)
+    for (a0, a1, aw), (b0, b1, bw) in zip(spans, spans[1:]):
+        if b0 < a1:
+            sys.exit(f'{b0:#x} ({bw}) overlaps {a0:#x} ({aw})')
+
+
 def main(src, dst):
     data = bytearray(open(src, 'rb').read())
     patches = PATCHES + widescreen_patches(data, call)
+    overlaps(patches)
     for va, old, new, why in patches:
         o = va - BASE
         if data[o:o + len(old)] != old:

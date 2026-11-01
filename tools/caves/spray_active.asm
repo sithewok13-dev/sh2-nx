@@ -1,7 +1,7 @@
 ; EE IsSprayAllocActiveASM, for spray.asm's stubs: eax 1 on every other game frame, or while no particle exists;
 ; always 1 at 30 fps (RATE60 0).
 bits 32
-org 0x4011C0
+org 0x401980
 
 RATE60          equ 0x0EC02000
 SPRAY_FRAME     equ 0x0EC02030   ; dword: the game frame last seen (EE SprayFrameCounter)
