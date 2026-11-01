@@ -45,6 +45,11 @@ int game_flashlight_on(void) {
 #define TRANSITION  0x01F7D490u  /* fading (GetTransitionStatePointer: 0 none, 1 to black, 2 black, 3 from black) */
 #define PAUSE_ROW   0x009326B4u  /* the operand of the `mov eax, [..]` 0x10 past the pattern at 0x407497 */
 
+/* James is somewhere in the game (not the title, its menus or the opening): a room is loaded (SH2EE's
+ * GetRoomIDPointer, 0 for none) and the screen isn't the main menu. */
+#define ROOM_ID     0x01FB7DACu  /* the `cmp dword [..]` 0xD7 past the pattern at 0x52A4A0 */
+int game_in_world(void) { return MEM32(ROOM_ID) != 0 && MEM8(EVENT_INDEX) != 2; }
+
 int game_screen(void) {
     if (MEM32(TRANSITION)) return SCREEN_LOADING;  /* fading out, black, or fading in: nothing to touch yet */
     switch (MEM8(EVENT_INDEX)) {

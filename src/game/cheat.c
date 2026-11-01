@@ -31,6 +31,7 @@ static const uint8_t healing[] = {1, 2, 3};  /* health drink, first aid kit, amp
  * 8, 10 and 12-17. 12 is the one the reload fills to 8 by itself (sub_0049EB30); 10 (with its ammo, 11) is only
  * handed out at the start of the other scenario (sub_0049EE10), so it is left out. */
 static const uint8_t melee[] = {12, 13, 14, 15, 16, 17};
+#define FLASHLIGHT 18  /* item 18 (bit 0x40000 of the first word: SH2EE's GetFlashLightAcquired) */
 
 static int cheat_on;
 
@@ -65,4 +66,5 @@ void cheat_tick(void) {
     }
     for (unsigned i = 0; i < sizeof healing; i++) give(healing[i], 10);
     for (unsigned i = 0; i < sizeof melee; i++) give(melee[i], melee[i] == 12 ? 8 : 0);
+    give(FLASHLIGHT, 0);
 }
