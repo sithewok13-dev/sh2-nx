@@ -536,6 +536,7 @@ METHOD(dev_Present, 5) {
         if (f) { fprintf(f, "P6 %u %u 255\n", bb->tw, bb->th); fwrite(px, 3, bb->tw * bb->th, f); fclose(f); }
         free(px);
     }
+    cheat_tick();      /* the CHEAT toggle's health and ammo (game/cheat.c) */
 #if defined(SH2_IOS) || defined(SH2_TOUCH)
     touch_draw();      /* the on-screen controls, over the frame */
 #endif
