@@ -418,6 +418,17 @@ static void animation_rate(float k) {
     g_esp += 4;
 }
 void sub_00401290(void) { animation_rate(0.5f); }
+/* EE PatchPrisonerTimer: reached by a jump in place of the function's `ret`: the prisoner's timer, just reset,
+ * doubled at 60 fps; then that `ret`. */
+void sub_004012A8(void) {
+    if (game_frame_rate() == 60) MEM32(g_esi + 0xA0) <<= 1;
+    g_esp += 4;
+}
+/* EE PatchFlashlightOnSpeed: `mov word [0x89FF8A], 60` (the flashlight's switch-on time in frames), 120 at 60 fps. */
+void sub_004012B0(void) {
+    MEM16(0x0089FF8Au) = game_frame_rate() == 60 ? 120 : 60;
+    g_esp += 4;
+}
 /* EE PatchHoldDamage: `fsub dword [esi+0x11C]` (an enemy's hold damage, every frame) as damage * 30 * the frame
  * time (0xA33360, kept by the frame limiter): unchanged at 30 fps, half a frame's worth at 60. */
 void sub_004012A0(void) {

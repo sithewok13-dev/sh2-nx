@@ -22,6 +22,8 @@ CAVE_FONT = 0x401280            # eight bytes apart: ee.c font texture size, fon
 CAVE_RATE = 0x401290            # eight bytes apart: ee.c animation rate halved / doubled at 60 fps (EE SixtyFPSPatch)
 ANIMATION_RATE = 0x447830       # the game's animation rate (EE's GetFogAnimationRate), scaled by the frame time
 CAVE_HOLD_DAMAGE = 0x4012A0     # ee.c: hold damage scaled by the frame time (EE PatchHoldDamage)
+CAVE_PRISONER = 0x4012A8        # ee.c: the prisoner timer doubled at 60 fps (EE PatchPrisonerTimer)
+CAVE_FLASHLIGHT_ON = 0x4012B0   # ee.c: the flashlight's switch-on time, 60 or 120 frames (EE PatchFlashlightOnSpeed)
 PLAY_SOUND = 0x515580           # the game's play-sound-effect function
 # EE TexPatch buffers, in guest memory between the image and the heap (0x2500000-0x10000000):
 # 2x and 4x the largest texture file (22,380,640 bytes, sh2e/pic/map), as EE sizes them.
@@ -37,6 +39,10 @@ FRAME_LIMITER = 0x4F6CE0        # busy-waits until 1/30 s has passed
 
 def call(at, target):
     return b'\xE8' + struct.pack('<i', target - (at + 5))
+
+
+def jmp(at, target):
+    return b'\xE9' + struct.pack('<i', target - (at + 5))
 
 
 def p32(v):
@@ -185,6 +191,15 @@ PATCHES = [
     # half a frame's worth at 60.
     (CAVE_HOLD_DAMAGE, b'\xCC' * 4, b'\xC3\xCC\xCC\xCC', 'cave: hold damage'),
     (0x5359E1, bytes.fromhex('d8a61c010000'), call(0x5359E1, CAVE_HOLD_DAMAGE) + b'\x90', '60 fps: hold damage by frame time'),
+    # -- PatchPrisonerTimer: the "Ritual" prisoner's footstep timer, just reset ([esi+0xA0]); the function's `ret`
+    # becomes a jump to a cave that doubles it at 60 fps and returns.
+    (CAVE_PRISONER, b'\xCC' * 4, b'\xC3\xCC\xCC\xCC', 'cave: prisoner timer'),
+    (0x4AE615, b'\xC3\x90\x90\x90\x90', jmp(0x4AE615, CAVE_PRISONER), '60 fps: prisoner timer'),
+    # -- PatchFlashlightOnSpeed: `mov word [0x89FF8A], 60` (frames to switch the flashlight on) becomes a call to a
+    # cave that writes 120 at 60 fps.
+    (CAVE_FLASHLIGHT_ON, b'\xCC' * 4, b'\xC3\xCC\xCC\xCC', 'cave: flashlight on speed'),
+    (0x50A5B3, bytes.fromhex('66c7058aff89003c00'), call(0x50A5B3, CAVE_FLASHLIGHT_ON) + b'\x90' * 4,
+     '60 fps: flashlight switch-on time'),
 ]
 
 
