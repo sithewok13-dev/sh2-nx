@@ -16,7 +16,9 @@ void controls_set_classic(int on) {
 }
 
 /* Game thread, once per presented frame (d3d8.c). */
+static void frame_rate_tick(void);
 void controls_tick(void) {
+    frame_rate_tick();
     if (!chosen) return;
     uint8_t want = classic ? 0 : 1;
     if (MEM8(CONTROL_TYPE) != want) MEM8(CONTROL_TYPE) = want;
@@ -70,4 +72,24 @@ int game_pause_tap(float y480) {
     if (y480 < 216 || row > 4) return 0;
     MEM8(PAUSE_ROW) = (uint8_t)row;
     return 1;
+}
+
+/* ---- the frame rate (the touch tray's RATE: 60 by default on iOS, the game's 30 elsewhere) ----
+ * The game steps its logic in 60 Hz ticks; its frame limiter (sub_004F6CE0) waits until the interval at
+ * 0xA33350 (64-bit, in QueryPerformanceCounter ticks: the frequency is at 0xA33348) has passed since the last
+ * frame, then counts the ticks the frame took (0xA3336C, two at 30 fps, one at 60). The interval is set to a
+ * thirtieth of a second when the game starts (sub_004F6C80); a sixtieth gives 60 frames a second. */
+#define QPC_FREQ        0x00A33348u
+#define FRAME_INTERVAL  0x00A33350u
+static int frame_rate;  /* 0: leave the game's own */
+
+void game_set_frame_rate(int fps) { frame_rate = fps == 60 || fps == 30 ? fps : 0; }
+
+static void frame_rate_tick(void) {
+    if (!frame_rate) return;
+    uint64_t freq = (uint64_t)MEM32(QPC_FREQ) | (uint64_t)MEM32(QPC_FREQ + 4) << 32;
+    if (!freq) return;  /* not started yet */
+    uint64_t want = freq / frame_rate;
+    MEM32(FRAME_INTERVAL) = (uint32_t)want;
+    MEM32(FRAME_INTERVAL + 4) = (uint32_t)(want >> 32);
 }
