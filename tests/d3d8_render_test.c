@@ -9,21 +9,29 @@
 #include <stdarg.h>
 #include <unistd.h>
 
-/* ---- what ee.c and the generated code would provide ---- */
-recomp_func_t recomp_lookup(uint32_t va) { (void)va; return NULL; }
-int recomp_dispatch_init(void) { return 0; }
-void xbe_entry_point(void) {}
-recomp_func_t ee_lookup_manual(uint32_t va) { (void)va; return NULL; }
-void ee_frame(void) {}
-void ee_init(void) {}
-void launcher_run(void) {}
-void ee_file_opened(const char *guest, FILE *f) { (void)guest; (void)f; }
-uint32_t ee_rumble_gain(uint32_t magnitude) { return magnitude; }
+/* ---- what the game file (ee.c / sh3.c) and the generated code would provide ----
+ * Weak, so the one test builds against sh2-nx and sh3-nx alike: whatever the runtime defines itself wins. */
+#define STUB __attribute__((weak))
+STUB recomp_func_t recomp_lookup(uint32_t va) { (void)va; return NULL; }
+STUB int recomp_dispatch_init(void) { return 0; }
+STUB void xbe_entry_point(void) {}
+STUB recomp_func_t ee_lookup_manual(uint32_t va) { (void)va; return NULL; }
+STUB recomp_func_t recomp_lookup_manual(uint32_t va) { (void)va; return NULL; }
+STUB void ee_frame(void) {}
+STUB void ee_init(void) {}
+STUB void game_init(void) {}
+STUB void launcher_run(void) {}
+STUB void ee_file_opened(const char *guest, FILE *f) { (void)guest; (void)f; }
+STUB uint32_t ee_rumble_gain(uint32_t magnitude) { return magnitude; }
 
 /* ---- calls into the layer ---- */
-extern const Bridge __start_sh2_bridges[], __stop_sh2_bridges[];
+/* The bridges' section: sh2_bridges in sh2-nx, game_bridges in sh3-nx. */
+extern const Bridge __start_sh2_bridges[] STUB, __stop_sh2_bridges[] STUB;
+extern const Bridge __start_game_bridges[] STUB, __stop_game_bridges[] STUB;
 static uint32_t call_bridge(const char *name, int n, const uint32_t *a) {
-    for (const Bridge *b = __start_sh2_bridges; b < __stop_sh2_bridges; b++)
+    const Bridge *lo = __start_sh2_bridges ? __start_sh2_bridges : __start_game_bridges;
+    const Bridge *hi = __start_sh2_bridges ? __stop_sh2_bridges : __stop_game_bridges;
+    for (const Bridge *b = lo; b < hi; b++)
         if (!strcmp(b->name, name)) {
             for (int i = n - 1; i >= 0; i--) PUSH32(g_esp, a[i]);
             PUSH32(g_esp, 0xFFFFFFF0u);
