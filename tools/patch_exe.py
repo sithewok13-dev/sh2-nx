@@ -208,16 +208,8 @@ PATCHES = [
     (CAVE_FLASHLIGHT_ON, b'\xCC' * 4, b'\xC3\xCC\xCC\xCC', 'cave: flashlight on speed'),
     (0x50A5B6, bytes.fromhex('66c7058aff89003c00'), call(0x50A5B6, CAVE_FLASHLIGHT_ON) + b'\x90' * 4,
      '60 fps: flashlight switch-on time'),
-    # -- assembled caves (tools/caves): written over int3 padding
-    *((org, b'\xCC' * len(code), code, 'cave: ' + name) for name, (org, code, syms) in CAVES.items()),
-    # -- DoubleFootstepFix: James's and Maria's footstep handlers jump to the cave at their first footstep read
-    (0x54B330, bytes.fromhex('0fbe44f411'), jmp(0x54B330, cave('footstep', 'james')), '60 fps: James double footstep'),
-    (0x549715, bytes.fromhex('0fbe44f409'), jmp(0x549715, cave('footstep', 'maria')), '60 fps: Maria double footstep'),
-    # -- SprayEffect spawn rate: each spawner's `push esi; push 5; push handler` jumps to its stub
-    (0x4A4A10, bytes.fromhex('566a0568c03e4a00'), jmp(0x4A4A10, cave('spray', 'lying')) + b'\x90' * 3,
-     '60 fps: Lying Figure spray spawn rate'),
-    (0x4A5090, bytes.fromhex('566a0568f0434a00'), jmp(0x4A5090, cave('spray', 'hyper')) + b'\x90' * 3,
-     '60 fps: hyper spray spawn rate'),
+    # (EE's DoubleFootstepFix and the spray spawn rate are left out: they jump into the middle of a game function
+    # and back, which the recompiled code can't follow. It crashed on the phone in build 113.)
     # -- SprayEffect speeds: the operands of the spray's `fmul dword [factor]` read guest variables instead of the
     # game's constants (SPRAY_SPEEDS)
     *((va, p32(orig), p32(SPRAY_SPEED_VARS + 4 * var), '60 fps: spray speed ' + why) for va, orig, var, why in (
