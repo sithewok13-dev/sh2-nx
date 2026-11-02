@@ -266,13 +266,14 @@ static void ee_widescreen_init(void) {
      * the screen with no bars, and Present scales it to the panel's full pixel resolution. */
     int sw, sh;
     ios_screen_size(&sw, &sh);
-    /* RES in the touch tray (touch.cfg res=0/1/2): full, high (80%), balanced (two thirds), for a cooler phone */
+    /* RES in the touch tray (touch.cfg quality=0/1/2): full, high (80%, the default), balanced (two thirds),
+     * for a cooler phone */
     static const float res_scale[3] = {1.0f, 0.8f, 2.0f / 3.0f};
-    int res = 0;
+    int res = 1;
     FILE *cfg = fopen("touch.cfg", "r");
-    while (cfg && fgets(line, sizeof line, cfg)) sscanf(line, "res=%d", &res);
+    while (cfg && fgets(line, sizeof line, cfg)) sscanf(line, "quality=%d", &res);
     if (cfg) fclose(cfg);
-    if (res < 0 || res > 2) res = 0;
+    if (res < 0 || res > 2) res = 1;
     if (screen && sw > 0 && sh > 0) {
         w = sw < 1920 ? (uint32_t)sw : 1920;
         w = ((uint32_t)(w * res_scale[res]) + 1) & ~1u;
