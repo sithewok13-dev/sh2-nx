@@ -815,8 +815,8 @@ void sub_004567B0(void) { uint32_t from = MEM32(g_esp); sub_004567B0_gen(); save
  * (sub_0051FA10) moves it on: its position at +0x5C (0x1F8123C) and the point it looks at at +0x98 (0x1F81278)
  * (sub_0051AE60 aims from one to the other). Right after that update the free camera writes both, so the view, the
  * fog and where "forward" is for walking all follow it. Only in play (no cutscene, movie, menu or fade: controls.c's
- * game_screen); elsewhere, and with FIXED (the default), the game's cameras as made. Nothing stops it going through
- * a wall yet: it stays close (1.9 m) so that is rare. The world is y down and in millimetres. */
+ * game_screen) and outdoors (free_camera_room); elsewhere, and with FIXED (the default), the game's cameras as made.
+ * The world is y down and in millimetres. */
 #define CAM_POS     0x01F8123Cu
 #define CAM_TARGET  0x01F81278u
 #define JAMES_PTR   0x01FB7C80u  /* +0x1C his position */
@@ -829,9 +829,20 @@ void game_set_free_camera(int on) {
     FC.on = !!on;
 }
 
+/* Outdoors only, for now: with no wall test the camera backs out through a room's walls (the motorhome showed the
+ * room from outside, then nothing). Rooms by EE's numbering (Patches.h): the observation deck, the forest and
+ * cemetery, the town's east, west and lakeside streets, the apartments' courtyard, the hospital's roof and its other
+ * world's garden, the prison yard. Elsewhere the game's own cameras, as made. */
+static int free_camera_room(void) {
+    switch (MEM32(EE_ROOM_ID)) {
+    case 0x02: case 0x03: case 0x04: case 0x07: case 0x08: case 0x0E: case 0x2B: case 0x49: case 0x72: return 1;
+    }
+    return 0;
+}
+
 static void free_camera_update(void) {
     uint32_t j = MEM32(JAMES_PTR);
-    int run = FC.on && game_screen() == SCREEN_PLAY && j >= 0x10000u && (uint64_t)j + 0x40 <= host_arena_bytes;
+    int run = FC.on && game_screen() == SCREEN_PLAY && free_camera_room() && j >= 0x10000u && (uint64_t)j + 0x40 <= host_arena_bytes;
     Uint32 now = SDL_GetTicks();
     float dt = FC.last ? (now - FC.last) / 1000.0f : 0;
     FC.last = now;
@@ -846,11 +857,11 @@ static void free_camera_update(void) {
     }
     float rx, ry;
     pad_right_stick(&rx, &ry);
-    float sx = rx * fabsf(rx), sy = ry * fabsf(ry);
-    FC.yaw += sx * 1.8f * dt;
+    float sx = rx, sy = ry;  /* straight, not squared: LOOK's steps already ease the touch drag */
+    FC.yaw += sx * 3.6f * dt;
     if (FC.yaw > (float)M_PI) FC.yaw -= 2 * (float)M_PI;
     if (FC.yaw < -(float)M_PI) FC.yaw += 2 * (float)M_PI;
-    FC.pitch += sy * 1.35f * dt;  /* the stick down: the camera rises and looks down */
+    FC.pitch += sy * 2.4f * dt;  /* the stick down: the camera rises and looks down */
     if (FC.pitch < -0.35f) FC.pitch = -0.35f;
     if (FC.pitch > 1.1f) FC.pitch = 1.1f;
     /* round a point at his shoulders, 1.9 m back, the camera a little to his right */
