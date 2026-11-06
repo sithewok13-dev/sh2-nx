@@ -194,6 +194,21 @@ static void scene_3d(void) {  /* depth test, culling, vertex colors and DrawInde
     present();
 }
 
+/* The free camera's wall test (d3d8_ray.c) against the frame just presented: the yellow quad of scene_3d (a static
+ * vertex buffer, XYZ, depth written) is in the world; a line through it stops there, one beside it doesn't. */
+extern uint32_t ray_min_triangles;
+float d3d_world_ray(const float *a, const float *b);
+static void ray_checks(void) {
+    ray_min_triangles = 1;
+    float a[3] = {-1.15f, 0.8f, 0}, b[3] = {-1.15f, 0.8f, 3}, c[3] = {1.5f, 0.8f, 0}, e[3] = {1.5f, 0.8f, 3};
+    float hit = d3d_world_ray(a, b), miss = d3d_world_ray(c, e);
+    printf("  %s   wall test: through the quad stops at %.2f (0.40)\n", fabsf(hit - 0.4f) < 0.01f ? "ok" : "FAIL", hit);
+    printf("  %s   wall test: beside it, clear (%.2f)\n", miss == 1 ? "ok" : "FAIL", miss);
+    if (fabsf(hit - 0.4f) >= 0.01f || miss != 1) rt_fatal("wall test failed");
+    ray_min_triangles = 1500;
+    printf("  %s   wall test: too little world to tell (%.0f)\n", d3d_world_ray(a, b) < 0 ? "ok" : "FAIL", d3d_world_ray(a, b));
+}
+
 static void scene_shaders(void) {  /* vs_1_1 with a D3DCOLOR input, ps_1_1 tex * diffuse */
     com(dev, Clear, 6, 0, 0, 1, 0xFF000000, u32f(1), 0);
     uint32_t decl[] = {0x20000000, 0x40020000, 0x40040005, 0xFFFFFFFF};  /* stream 0: v0 FLOAT3, v5 D3DCOLOR */
@@ -261,6 +276,7 @@ int main(int argc, char **argv) {
     scene_texture();
     scene_formats();
     scene_3d();
+    ray_checks();
     scene_shaders();
     readbacks();
     puts("render test: done");

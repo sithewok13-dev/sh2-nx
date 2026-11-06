@@ -815,24 +815,24 @@ void sub_004567B0(void) { uint32_t from = MEM32(g_esp); sub_004567B0_gen(); save
  * (sub_0051FA10) moves it on: its position at +0x5C (0x1F8123C) and the point it looks at at +0x98 (0x1F81278)
  * (sub_0051AE60 aims from one to the other). Right after that update the free camera writes both, so the view, the
  * fog and where "forward" is for walking all follow it. Only in play (no cutscene, movie, menu or fade: controls.c's
- * game_screen) and outdoors (free_camera_room); elsewhere, and with FIXED (the default), the game's cameras as made.
+ * game_screen); elsewhere, and with FIXED (the default), the game's cameras as made. It keeps in front of walls
+ * with d3d8_ray.c's test against what the game drew last frame (until that has seen a world, the open rooms only).
  * The world is y down and in millimetres. */
 #define CAM_POS     0x01F8123Cu
 #define CAM_TARGET  0x01F81278u
 #define JAMES_PTR   0x01FB7C80u  /* +0x1C his position */
 #define FC_METRE    1000.0f
 
-static struct { int on, active; float yaw, pitch; Uint32 last; } FC = {.pitch = 0.25f};
+static struct { int on, active; float yaw, pitch, dist; Uint32 last; } FC = {.pitch = 0.25f};
 
 void game_set_free_camera(int on) {
     if (FC.on != !!on) rt_log("camera: %s", on ? "free (the right stick)" : "the game's");
     FC.on = !!on;
 }
 
-/* Outdoors only, for now: with no wall test the camera backs out through a room's walls (the motorhome showed the
- * room from outside, then nothing). Rooms by EE's numbering (Patches.h): the observation deck, the forest and
- * cemetery, the town's east, west and lakeside streets, the apartments' courtyard, the hospital's roof and its other
- * world's garden, the prison yard. Elsewhere the game's own cameras, as made. */
+/* The open rooms (EE's numbering, Patches.h: the observation deck, the forest and cemetery, the town's streets, the
+ * courtyard, the hospital's roof and garden, the prison yard): where the camera may run even with no wall test (the
+ * port's d3d8_ray.c has seen no world to test against). */
 static int free_camera_room(void) {
     switch (MEM32(EE_ROOM_ID)) {
     case 0x02: case 0x03: case 0x04: case 0x07: case 0x08: case 0x0E: case 0x2B: case 0x49: case 0x72: return 1;
@@ -840,9 +840,28 @@ static int free_camera_room(void) {
     return 0;
 }
 
+/* The share of the way from the pivot to the camera that's clear of the world (d3d8_ray.c): three lines, the
+ * middle one and one a little to each side; each starts a little out from the pivot, past James himself. */
+static float free_camera_clear(const float *pivot, const float *cam, float rx, float rz) {
+    float best = 1, side = 0.12f * FC_METRE;
+    for (int k = -1; k <= 1; k++) {
+        float a[3], b[3], len, dx = cam[0] - pivot[0], dy = cam[1] - pivot[1], dz = cam[2] - pivot[2];
+        len = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (len < 1) return 1;
+        float skip = 0.35f * FC_METRE / len;
+        a[0] = pivot[0] + dx * skip + rx * side * k, a[1] = pivot[1] + dy * skip, a[2] = pivot[2] + dz * skip + rz * side * k;
+        b[0] = cam[0] + rx * side * k, b[1] = cam[1], b[2] = cam[2] + rz * side * k;
+        float f = d3d_world_ray(a, b);
+        if (f < 0) return -1;
+        f = skip + (1 - skip) * f;
+        if (f < best) best = f;
+    }
+    return best;
+}
+
 static void free_camera_update(void) {
     uint32_t j = MEM32(JAMES_PTR);
-    int run = FC.on && game_screen() == SCREEN_PLAY && free_camera_room() && j >= 0x10000u && (uint64_t)j + 0x40 <= host_arena_bytes;
+    int run = FC.on && game_screen() == SCREEN_PLAY && j >= 0x10000u && (uint64_t)j + 0x40 <= host_arena_bytes;
     Uint32 now = SDL_GetTicks();
     float dt = FC.last ? (now - FC.last) / 1000.0f : 0;
     FC.last = now;
@@ -868,9 +887,19 @@ static void free_camera_update(void) {
     float d = 1.9f * FC_METRE, cp = cosf(FC.pitch), sp = sinf(FC.pitch);
     float px = jx, py = jy - 1.45f * FC_METRE, pz = jz;
     float right_x = cosf(FC.yaw), right_z = -sinf(FC.yaw), side = 0.3f * FC_METRE;
-    MEMF(CAM_POS) = px + sinf(FC.yaw) * cp * d + right_x * side;
-    MEMF(CAM_POS + 4) = py - sp * d;
-    MEMF(CAM_POS + 8) = pz + cosf(FC.yaw) * cp * d + right_z * side;
+    float pivot[3] = {px + right_x * side, py, pz + right_z * side};
+    float want[3] = {pivot[0] + sinf(FC.yaw) * cp * d, pivot[1] - sp * d, pivot[2] + cosf(FC.yaw) * cp * d};
+    /* walls: in front of one at once, backing out again smoothly */
+    float clear = free_camera_clear(pivot, want, right_x, right_z);
+    if (clear < 0 && !free_camera_room()) { FC.active = 0; return; }  /* no world seen yet: open rooms only */
+    float allowed = clear < 0 ? d : clear * d - 0.15f * FC_METRE;
+    if (allowed < 0.3f * FC_METRE) allowed = 0.3f * FC_METRE;
+    if (!FC.active || FC.dist <= 0 || allowed < FC.dist) FC.dist = allowed;
+    else FC.dist = allowed + (FC.dist - allowed) * expf(-4 * dt);
+    float k = FC.dist / d;
+    MEMF(CAM_POS) = pivot[0] + (want[0] - pivot[0]) * k;
+    MEMF(CAM_POS + 4) = pivot[1] + (want[1] - pivot[1]) * k;
+    MEMF(CAM_POS + 8) = pivot[2] + (want[2] - pivot[2]) * k;
     MEMF(CAM_TARGET) = px + right_x * side * 0.6f;
     MEMF(CAM_TARGET + 4) = py + 0.1f * FC_METRE;
     MEMF(CAM_TARGET + 8) = pz + right_z * side * 0.6f;

@@ -494,6 +494,7 @@ METHOD(dev_Reset, 2) { device_reset(ARG(1)); return 0; }
 void ee_frame(void);  /* src/game/ee.c: per-frame Enhanced Edition logic */
 
 METHOD(dev_Present, 5) {
+    ray_frame_end();  /* this frame's world becomes the one the free camera tests against */
     ee_frame();
     int ww, wh;
     SDL_GL_GetDrawableSize(rt_window, &ww, &wh);
@@ -992,6 +993,7 @@ static void stream_bases(uintptr_t *base, GLuint *bufs) {
 }
 
 METHOD(dev_DrawPrimitive, 4) {
+    ray_collect(ARG(1), ARG(2), ARG(3), 0);  /* the free camera's wall test (d3d8_ray.c) */
     uintptr_t base[16];
     GLuint bufs[16];
     stream_bases(base, bufs);
@@ -1003,6 +1005,7 @@ METHOD(dev_DrawPrimitive, 4) {
 METHOD(dev_DrawIndexedPrimitive, 6) {
     Res *ib = res_of(dev->ib);
     if (!ib) return D3DERR_INVALIDCALL;
+    ray_collect(ARG(1), ARG(4), ARG(5), 1);
     uintptr_t base[16];
     GLuint bufs[16];
     stream_bases(base, bufs);

@@ -36,6 +36,7 @@ typedef struct Res {
     int dirty;
     GLuint buf;                  /* vertex and index buffers */
     int is_depth, is_rt;
+    uint32_t ver;                /* buffers: bumped by every Unlock (d3d8_ray.c's bounds cache) */
 } Res;
 
 Res *res_of(uint32_t obj);       /* NULL for a NULL object */
@@ -127,3 +128,7 @@ void shader_delete_ps(uint32_t h);
 /* Vertex shader declarations: per input register, which stream, offset and D3DVSDT type. -1 stream if absent. */
 typedef struct VsInput { int stream, offset, type; } VsInput;
 const VsInput *shader_vs_inputs(uint32_t h);
+
+/* d3d8_ray.c: the free camera's wall test against the solid world the game drew last frame. */
+void ray_collect(uint32_t prim, uint32_t start, uint32_t count, int indexed);  /* each draw, before it is made */
+void ray_frame_end(void);                                                     /* each Present */
