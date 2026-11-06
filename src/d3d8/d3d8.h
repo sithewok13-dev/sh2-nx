@@ -132,3 +132,13 @@ const VsInput *shader_vs_inputs(uint32_t h);
 /* d3d8_ray.c: the free camera's wall test against the solid world the game drew last frame. */
 void ray_collect(uint32_t prim, uint32_t start, uint32_t count, int indexed);  /* each draw, before it is made */
 void ray_frame_end(void);                                                     /* each Present */
+
+/* d3d8.c: the camera's frozen frame (runtime/camera.c). One frame's draws are recorded as the game makes them,
+ * then drawn again as often as wanted, the 3D ones from a moved camera: clip space times `clip` (D3D row-major). */
+void frame_rec_begin(void);       /* records the frame the game draws next */
+int frame_rec_ready(void);        /* a whole frame was recorded (the Present after frame_rec_begin) */
+void frame_rec_drop(void);
+void frame_replay(const float *clip);  /* clip: NULL draws it as it was */
+int frame_rec_camera(float view[16], float proj[16]);  /* the main 3D pass's view and projection (0: none) */
+void frame_show(void);            /* the back buffer to the screen, the overlay over it, swapped */
+void shader_set_freeze(const float *clip);  /* d3d8_shader.c: applies to the 3D draws that follow (NULL: off) */

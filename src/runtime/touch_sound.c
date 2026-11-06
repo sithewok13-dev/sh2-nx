@@ -2,7 +2,7 @@
  *   on   the pocket radio's static (the game's warning that something is near) swelling up, then a heavy
  *        metal clang, as of the Great Knife set down: inharmonic partials, each dying away at its own rate
  *   off  a short burst of static, cut off
- * Played on an audio device of its own, alongside the game's. */
+ * and CAMERA's shutter. Played on an audio device of its own, alongside the game's. */
 #if defined(SH2_IOS) || defined(SH2_TOUCH)
 #include "rt.h"
 #include <SDL2/SDL.h>
@@ -71,20 +71,49 @@ float *touch_sound_make(int on, int *n) {
 
 static SDL_AudioDeviceID dev;
 
-/* Main thread (the tray, or the CHEAT button's hold). */
-void touch_sound_cheat(int on) {
+static void play(float *s, int n) {
+    if (!s) return;
     if (!dev) {
-        if (!SDL_WasInit(SDL_INIT_AUDIO) && SDL_InitSubSystem(SDL_INIT_AUDIO)) return;
+        if (!SDL_WasInit(SDL_INIT_AUDIO) && SDL_InitSubSystem(SDL_INIT_AUDIO)) { free(s); return; }
         SDL_AudioSpec want = {.freq = RATE, .format = AUDIO_F32SYS, .channels = 1, .samples = 1024};
         dev = SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
-        if (!dev) { rt_log("touch: no audio device for CHEAT's sound: %s", SDL_GetError()); return; }
+        if (!dev) { rt_log("touch: no audio device for the buttons' sounds: %s", SDL_GetError()); free(s); return; }
         SDL_PauseAudioDevice(dev, 0);
     }
-    int n;
-    float *s = touch_sound_make(on, &n);
-    if (!s) return;
     SDL_ClearQueuedAudio(dev);
     SDL_QueueAudio(dev, s, (Uint32)(n * sizeof *s));
     free(s);
+}
+
+/* Main thread (the tray, or the CHEAT button's hold). */
+void touch_sound_cheat(int on) {
+    int n;
+    float *s = touch_sound_make(on, &n);
+    play(s, n);
+}
+
+/* CAMERA's shutter: the blades opening and, 60 ms later, closing: two dry clicks, the second a little lower. */
+float *touch_sound_shutter_make(int *n) {
+    rng = 0x5349u;
+    *n = (int)(0.14f * RATE);
+    float *s = calloc(*n, sizeof *s);
+    if (!s) return NULL;
+    static const float at[] = {0.004f, 0.064f}, tone[] = {2900, 2100}, gain[] = {1.0f, 0.75f};
+    for (int c = 0; c < 2; c++) {
+        int s0 = (int)(at[c] * RATE);
+        float prev = 0;
+        for (int i = s0; i < *n; i++) {
+            float t = (float)(i - s0) / RATE, x = noise(), hp = x - prev;  /* bright noise */
+            prev = x;
+            s[i] += gain[c] * (hp * 0.6f * expf(-t / 0.006f) + 0.4f * sinf(6.2831853f * tone[c] * t) * expf(-t / 0.012f));
+        }
+    }
+    normalize(s, *n, 0.5f);
+    return s;
+}
+void touch_sound_shutter(void) {
+    int n;
+    float *s = touch_sound_shutter_make(&n);
+    play(s, n);
 }
 #endif

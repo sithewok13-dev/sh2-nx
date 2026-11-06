@@ -4,6 +4,8 @@
  * (the "2D" type: the stick points where James goes, from the camera's view). The tray's choice is kept in
  * touch.cfg and held every frame, so the game's own options menu (or a save's settings) can't undo it. */
 #include "../runtime/rt.h"
+#include "../runtime/host.h"
+#include <math.h>
 
 #define CONTROL_TYPE 0x01DBC008u
 
@@ -17,8 +19,10 @@ void controls_set_classic(int on) {
 
 /* Game thread, once per presented frame (d3d8.c). */
 static void frame_rate_tick(void);
+static void facing_tick(void);
 void controls_tick(void) {
     frame_rate_tick();
+    facing_tick();
     if (!chosen) return;
     uint8_t want = classic ? 0 : 1;
     if (MEM8(CONTROL_TYPE) != want) MEM8(CONTROL_TYPE) = want;
@@ -142,3 +146,41 @@ static void frame_rate_tick(void) {
 }
 
 int game_frame_rate(void) { return speeds_rate ? speeds_rate : 30; }  /* as running now (30 on the map) */  /* for the code hooks (ee.c) */
+
+/* ---- James's head and facing, for the camera's selfies (runtime/camera.c) ----
+ * His position is the player object's +0x1C (0x1FB7C80: SH2EE's GetJamesPos); the head is 1.6 m above it (y down,
+ * millimetres). Which way he faces isn't known from the game yet, so it is the way he last walked (followed each
+ * frame); before he has walked anywhere, away from the game's camera (0x1F8123C), which is how he usually stands. */
+#define JAMES_PTR 0x01FB7C80u
+#define CAM_POS   0x01F8123Cu
+static float last_x, last_z, face_x, face_z;
+static int have_last, have_face;
+static uint32_t james(void) {
+    uint32_t j = MEM32(JAMES_PTR);
+    return j >= 0x10000u && (uint64_t)j + 0x40 <= host_arena_bytes ? j : 0;
+}
+static void facing_tick(void) {
+    uint32_t j = james();
+    if (!j) { have_last = have_face = 0; return; }
+    float x = MEMF(j + 0x1C), z = MEMF(j + 0x24);
+    if (!isfinite(x) || !isfinite(z)) return;
+    if (have_last) {
+        float dx = x - last_x, dz = z - last_z, d = sqrtf(dx * dx + dz * dz);
+        if (d > 5 && d < 500) face_x = dx / d, face_z = dz / d, have_face = 1;  /* walked (not a jump to a new room) */
+        else if (d >= 500) have_face = 0;
+    }
+    last_x = x, last_z = z, have_last = 1;
+}
+int game_player_head(float head[3], float facing[3]) {
+    uint32_t j = james();
+    if (!j) return 0;
+    head[0] = MEMF(j + 0x1C), head[1] = MEMF(j + 0x20) - 1600.0f, head[2] = MEMF(j + 0x24);
+    if (!isfinite(head[0]) || !isfinite(head[1]) || !isfinite(head[2])) return 0;
+    if (have_face) facing[0] = face_x, facing[2] = face_z;
+    else {
+        float dx = head[0] - MEMF(CAM_POS), dz = head[2] - MEMF(CAM_POS + 8), d = sqrtf(dx * dx + dz * dz);
+        facing[0] = d > 1 ? dx / d : 0, facing[2] = d > 1 ? dz / d : 1;
+    }
+    facing[1] = 0;
+    return 1;
+}

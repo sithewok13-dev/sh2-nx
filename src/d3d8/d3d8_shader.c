@@ -342,7 +342,7 @@ typedef struct Prog {
     Key key;
     GLuint id;
     GLint c, pc, wvp, wv, normalm, proj, texm, mat, amb, lt, ltcol, ltpos, ltdir, ltatt, ltspot, world;
-    GLint vp, halfpix, tfactor, fogcolor, fogparams, alpharef, viewproj, bumpenv, power, ltspec, ltamb;
+    GLint vp, halfpix, tfactor, fogcolor, fogparams, alpharef, viewproj, bumpenv, power, ltspec, ltamb, freeze, freezeon;
     /* What its uniforms hold, so a draw only re-sends what changed (GL keeps them per program). */
     uint32_t vsc_gen, psc_gen, xform_gen, texm_gen, mat_gen, mat_xform_gen;
     float last_vp[4];
@@ -540,14 +540,17 @@ static Prog *build(const Key *k) {
         for (int i = 0; i < 16; i++) sp(&v, "layout(location = %d) in vec4 a_v%d;\n", i, i);
 #endif
     }
-    sp(&v, "uniform vec2 uHalfPix;\nout vec4 vD0, vD1, vT0, vT1, vT2, vT3, vT4, vT5, vT6, vT7;\nout float vFog, vFogZ;\n"
+    sp(&v, "uniform vec2 uHalfPix;\nuniform mat4 uFreeze;\nuniform float uFreezeOn;\nout vec4 vD0, vD1, vT0, vT1, vT2, vT3, vT4, vT5, vT6, vT7;\nout float vFog, vFogZ;\n"
            "void main() {\n  vec4 p; float fog, pts;\n");
 #ifdef SH2_GLES
     if (!k->ffp_vs)
         for (int i = 0; i < 16; i++) sp(&v, "  v%d = a_v%d%s;\n", i, i, k->bgra & 1 << i ? ".zyxw" : "");
 #endif
-    sp(&v, "  vs_main(p, vD0, vD1, vT0, vT1, vT2, vT3, vT4, vT5, vT6, vT7, fog, pts);\n"
-           "  vD0 = clamp(vD0, 0.0, 1.0); vD1 = clamp(vD1, 0.0, 1.0);\n"
+    sp(&v, "  vs_main(p, vD0, vD1, vT0, vT1, vT2, vT3, vT4, vT5, vT6, vT7, fog, pts);\n");
+    /* The camera's frozen frame (d3d8.c frame_replay): the 3D draws seen from a moved camera, in clip space. A
+     * perspective draw's w is its depth; full-screen passes and screen quads keep w at 1 and stay where they are. */
+    if (!k->rhw) sp(&v, "  if (uFreezeOn > 0.5 && abs(p.w - 1.0) > 0.001) p = uFreeze * p;\n");
+    sp(&v, "  vD0 = clamp(vD0, 0.0, 1.0); vD1 = clamp(vD1, 0.0, 1.0);\n"
            "  vFog = clamp(fog, 0.0, 1.0); vFogZ = p.w;\n"
            "  p.xy += uHalfPix * p.w;\n");
     /* Without glClipControl (ES) the shader maps D3D's clip space to GL's itself */
@@ -617,6 +620,7 @@ static Prog *build(const Key *k) {
     U(texm, "uTexM"); U(mat, "uMat"); U(amb, "uAmbient"); U(ltcol, "uLtDiffuse"); U(ltpos, "uLtPos");
     U(ltdir, "uLtDir"); U(ltatt, "uLtAtt"); U(ltspot, "uLtSpot"); U(world, "uWorld"); U(viewproj, "uViewProj");
     U(vp, "uVp"); U(halfpix, "uHalfPix"); U(tfactor, "uTFactor"); U(fogcolor, "uFogColor");
+    U(freeze, "uFreeze"); U(freezeon, "uFreezeOn");
     U(fogparams, "uFogParams"); U(alpharef, "uAlphaRef"); U(power, "uPower"); U(ltspec, "uLtSpecular");
     U(ltamb, "uLtAmbient");
 #undef U
@@ -761,6 +765,13 @@ static void normal_matrix(float *out, const float *m) {
 static void color4(float *o, uint32_t c) { o[0] = (c >> 16 & 255) / 255.f; o[1] = (c >> 8 & 255) / 255.f; o[2] = (c & 255) / 255.f; o[3] = (c >> 24) / 255.f; }
 static float rsf(uint32_t i) { float f; memcpy(&f, &dev->rs[i], 4); return f; }
 
+static float freeze_m[16];
+static int freeze_on;
+void shader_set_freeze(const float *clip) {
+    freeze_on = clip != NULL;
+    if (clip) memcpy(freeze_m, clip, sizeof freeze_m);
+}
+
 void shader_bind_for_draw(int rhw, uint32_t vs, const int *present) {
     Key k;
     memset(&k, 0, sizeof k);
@@ -822,6 +833,9 @@ void shader_bind_for_draw(int rhw, uint32_t vs, const int *present) {
     /* Uniforms, each only when the program does not hold the current value already. */
     int fresh = p->fresh;
     p->fresh = 0;
+    /* the camera's freeze: every draw (rare, and only while frozen); a D3D row-major matrix is GL's column-major */
+    if (p->freezeon >= 0) glUniform1f(p->freezeon, freeze_on ? 1.0f : 0.0f);
+    if (freeze_on && p->freeze >= 0) glUniformMatrix4fv(p->freeze, 1, GL_FALSE, freeze_m);
     float vp[4] = {dev->vp_x, dev->vp_y, dev->vp_w, dev->vp_h};
     if (fresh || memcmp(p->last_vp, vp, sizeof vp)) {
         memcpy(p->last_vp, vp, sizeof vp);

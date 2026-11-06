@@ -1,5 +1,6 @@
 /* IDirect3D8 and IDirect3DDevice8 on OpenGL. */
 #include "d3d8.h"
+#include <stddef.h>
 #include "../runtime/host.h"
 #include <math.h>
 
@@ -493,9 +494,11 @@ METHOD(dev_Reset, 2) { device_reset(ARG(1)); return 0; }
 
 void ee_frame(void);  /* src/game/ee.c: per-frame Enhanced Edition logic */
 
-METHOD(dev_Present, 5) {
-    ray_frame_end();  /* this frame's world becomes the one the free camera tests against */
-    ee_frame();
+static void rec_finish(void);
+static int rec_recording(void);
+
+/* The back buffer to the window, keeping the game's aspect ratio. */
+static void present_blit(void) {
     int ww, wh;
     SDL_GL_GetDrawableSize(rt_window, &ww, &wh);
     Res *bb = res_of(dev->backbuffer);
@@ -515,6 +518,27 @@ METHOD(dev_Present, 5) {
     float s = fminf((float)ww / bb->w, (float)wh / bb->h);
     int dw = bb->w * s, dh = bb->h * s, dx = (ww - dw) / 2, dy = (wh - dh) / 2;
     glBlitFramebuffer(0, 0, bb->tw, bb->th, dx, dy + dh, dx + dw, dy, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+}
+
+/* The camera's frozen frame on screen: what frame_replay drew, with the overlay, then swapped. */
+void frame_show(void) {
+    present_blit();
+#if defined(SH2_IOS) || defined(SH2_TOUCH)
+    touch_draw();
+#endif
+#ifdef SH2_IOS
+    ios_frame_gate();
+#endif
+    SDL_GL_SwapWindow(rt_window);
+    res_bind_targets();
+}
+
+METHOD(dev_Present, 5) {
+    ray_frame_end();  /* this frame's world becomes the one the free camera tests against */
+    ee_frame();
+    if (rec_recording()) rec_finish();  /* the frame the camera asked for is whole */
+    Res *bb = res_of(dev->backbuffer);
+    present_blit();
     res_snapshot_front();
     static int frame;
     rt_frame++;
@@ -554,6 +578,7 @@ METHOD(dev_Present, 5) {
         stat_t0 = now;
         stat_frames = 0;
     }
+    camera_after_present();  /* the camera's freeze, selfies and sweeps hold the game here (runtime/camera.c) */
     rt_pump_events();
     render_scale_update();  /* docked or undocked since the last frame: the targets are remade below */
     res_bind_targets();
@@ -612,27 +637,31 @@ static void rt_factors(float *sx, float *sy) {
     else *sx = *sy = 1;
 }
 
-METHOD(dev_Clear, 7) {
-    uint32_t flags = ARG(3), c = ARG(4);
+static void rec_clear(uint32_t n, uint32_t rects, uint32_t flags, uint32_t color, uint32_t z, uint32_t stencil);
+static void do_clear(uint32_t n, const int32_t *rects, uint32_t flags, uint32_t c, uint32_t z, uint32_t stencil) {
     GLbitfield mask = 0;
     if (flags & 1) {
         gls_clear_color((c >> 16 & 255) / 255.f, (c >> 8 & 255) / 255.f, (c & 255) / 255.f, (c >> 24) / 255.f);
         gls_color_mask(1, 1, 1, 1);
         mask |= GL_COLOR_BUFFER_BIT;
     }
-    if ((flags & 2) && dev->ds) { glClearDepth(f32(ARG(5))); gls_depth_mask(1); mask |= GL_DEPTH_BUFFER_BIT; }
-    if ((flags & 4) && dev->ds) { glClearStencil(ARG(6)); gls_stencil_mask(0xFF); mask |= GL_STENCIL_BUFFER_BIT; }
+    if ((flags & 2) && dev->ds) { glClearDepth(f32(z)); gls_depth_mask(1); mask |= GL_DEPTH_BUFFER_BIT; }
+    if ((flags & 4) && dev->ds) { glClearStencil(stencil); gls_stencil_mask(0xFF); mask |= GL_STENCIL_BUFFER_BIT; }
     apply_viewport_scissor(1);
-    if (ARG(1) && ARG(2)) {
+    if (n && rects) {
         float sx, sy;
         rt_factors(&sx, &sy);
-        for (uint32_t i = 0; i < ARG(1); i++) {
-            int32_t *r = GPTR(ARG(2) + 16 * i);  /* D3DRECT x1 y1 x2 y2 */
+        for (uint32_t i = 0; i < n; i++) {
+            const int32_t *r = rects + 4 * i;  /* D3DRECT x1 y1 x2 y2 */
             int x0 = scaled_px(r[0], sx), y0 = scaled_px(r[1], sy);
             gls_scissor(x0, y0, scaled_px(r[2], sx) - x0, scaled_px(r[3], sy) - y0);
             glClear(mask);
         }
     } else glClear(mask);
+}
+METHOD(dev_Clear, 7) {
+    rec_clear(ARG(1), ARG(2), ARG(3), ARG(4), ARG(5), ARG(6));
+    do_clear(ARG(1), ARG(1) && ARG(2) ? GPTR(ARG(2)) : NULL, ARG(3), ARG(4), ARG(5), ARG(6));
     return 0;
 }
 
@@ -984,28 +1013,156 @@ static GLuint gl_buffer(Res *b, GLenum target) {
     return b->buf;
 }
 
+/* ---- the camera's frozen frame ----
+ * While recording (one frame, from the Present after frame_rec_begin to the next), every draw and clear is kept with
+ * the device state it ran with: the part of Dev before the back buffer (render states, stages, transforms, lights,
+ * streams, shaders and their constants, targets). Replaying them draws that frame again; the game is held in the
+ * meantime, so its textures, static buffers and targets stay as they were. What the game may rewrite within a frame
+ * is copied as it is drawn: the UP draws' vertices and indices, and dynamic buffers (one GL copy per buffer and
+ * Unlock). The camera moves only the main 3D pass: the render target most perspective draws went to. */
+#define DEV_STATE offsetof(Dev, backbuffer)
+enum { OP_DRAW, OP_DRAW_IDX, OP_DRAW_UP, OP_DRAW_IDX_UP, OP_CLEAR };
+typedef struct {
+    int op, persp;
+    uint32_t a[8];
+    uint8_t *state;
+    uint32_t palette;
+    GLuint buf[16], ib;
+    void *data, *idx;
+} RecOp;
+static struct {
+    int on, ready;
+    RecOp *ops;
+    int n, cap, dropped;
+    struct { Res *b; uint32_t ver; GLuint copy; } *copies;
+    int ncopies, capcopies;
+    uint32_t main_rt;
+    float view[16], proj[16];
+    int have_camera;
+} rec;
+static const GLuint *rep_bufs;
+static GLuint rep_ib;
+
+static RecOp *rec_op(int op) {
+    if (!rec.on) return NULL;
+    if (rec.n == rec.cap) {
+        int cap = rec.cap ? rec.cap * 2 : 1024;
+        if (cap > 65536) { rec.dropped++; return NULL; }
+        rec.ops = realloc(rec.ops, cap * sizeof *rec.ops);
+        rec.cap = cap;
+    }
+    RecOp *o = &rec.ops[rec.n++];
+    memset(o, 0, sizeof *o);
+    o->op = op;
+    o->state = malloc(DEV_STATE);
+    memcpy(o->state, dev, DEV_STATE);
+    o->palette = dev->cur_palette;
+    return o;
+}
+static GLuint rec_copy(Res *b, GLenum target) {
+    for (int i = 0; i < rec.ncopies; i++)
+        if (rec.copies[i].b == b && rec.copies[i].ver == b->ver) return rec.copies[i].copy;
+    if (rec.ncopies == rec.capcopies) {
+        rec.capcopies = rec.capcopies ? rec.capcopies * 2 : 64;
+        rec.copies = realloc(rec.copies, rec.capcopies * sizeof *rec.copies);
+    }
+    GLuint g;
+    glGenBuffers(1, &g);
+    gls_bind_buffer(target, g);
+    glBufferData(target, b->size, GPTR(b->mem), GL_STATIC_DRAW);
+    rec.copies[rec.ncopies].b = b, rec.copies[rec.ncopies].ver = b->ver, rec.copies[rec.ncopies].copy = g;
+    rec.ncopies++;
+    return g;
+}
+#define DYNAMIC 0x200  /* D3DUSAGE_DYNAMIC */
+static void rec_streams(RecOp *o, int indexed) {
+    for (int s = 0; s < 16; s++) {
+        Res *vb = res_of(dev->stream[s]);
+        if (vb && (vb->usage & DYNAMIC)) o->buf[s] = rec_copy(vb, GL_ARRAY_BUFFER);
+    }
+    Res *ib = indexed ? res_of(dev->ib) : NULL;
+    if (ib && (ib->usage & DYNAMIC)) o->ib = rec_copy(ib, GL_ELEMENT_ARRAY_BUFFER);
+}
+static int rec_persp(void) {
+    if (dev->vs >= 0xF0000000u) return 1;
+    return (dev->vs & 0xE) != 4 && dev->proj[11] != 0;
+}
+static void rec_clear(uint32_t n, uint32_t rects, uint32_t flags, uint32_t color, uint32_t z, uint32_t stencil) {
+    RecOp *o = rec_op(OP_CLEAR);
+    if (!o) return;
+    uint32_t a[] = {n, flags, color, z, stencil};
+    memcpy(o->a, a, sizeof a);
+    if (n && rects) { o->data = malloc(16 * n); memcpy(o->data, GPTR(rects), 16 * n); }
+}
+static void free_ops(void) {
+    for (int i = 0; i < rec.n; i++) free(rec.ops[i].state), free(rec.ops[i].data), free(rec.ops[i].idx);
+    for (int i = 0; i < rec.ncopies; i++) { gls_buffer_deleted(rec.copies[i].copy); glDeleteBuffers(1, &rec.copies[i].copy); }
+    rec.n = rec.ncopies = rec.dropped = 0;
+    rec.have_camera = 0;
+}
+void frame_rec_begin(void) { free_ops(); rec.on = 1, rec.ready = 0; }
+static int rec_recording(void) { return rec.on; }
+int frame_rec_ready(void) { return rec.ready; }
+void frame_rec_drop(void) { free_ops(); rec.on = rec.ready = 0; }
+int frame_rec_camera(float view[16], float proj[16]) {
+    if (!rec.have_camera) return 0;
+    memcpy(view, rec.view, 64), memcpy(proj, rec.proj, 64);
+    return 1;
+}
+static void rec_finish(void) {
+    rec.on = 0, rec.ready = 1;
+    uint32_t rts[64] = {0}, counts[64] = {0};
+    int nrt = 0, best = -1;
+    for (int i = 0; i < rec.n; i++) {
+        RecOp *o = &rec.ops[i];
+        if (!o->persp) continue;
+        uint32_t rt = ((Dev *)o->state)->rt;
+        int j = 0;
+        while (j < nrt && rts[j] != rt) j++;
+        if (j == nrt && nrt < 64) rts[nrt++] = rt;
+        if (j < 64) counts[j]++;
+    }
+    for (int j = 0; j < nrt; j++) if (best < 0 || counts[j] > counts[best]) best = j;
+    rec.main_rt = best >= 0 ? rts[best] : 0;
+    for (int i = 0; i < rec.n; i++) {
+        RecOp *o = &rec.ops[i];
+        Dev *d = (Dev *)o->state;
+        if (o->persp && d->rt != rec.main_rt) o->persp = 0;
+        if (o->persp && !rec.have_camera && d->vs < 0xF0000000u) {
+            memcpy(rec.view, d->view, 64), memcpy(rec.proj, d->proj, 64);
+            rec.have_camera = 1;
+        }
+    }
+    rt_log("camera: frame recorded, %d calls%s, main pass %s", rec.n, rec.dropped ? " (some dropped)" : "",
+           rec.have_camera ? "found" : "not found");
+}
+
 static void stream_bases(uintptr_t *base, GLuint *bufs) {
     for (int s = 0; s < 16; s++) {
         Res *vb = res_of(dev->stream[s]);
         base[s] = 0;
-        bufs[s] = vb ? gl_buffer(vb, GL_ARRAY_BUFFER) : 0;
+        bufs[s] = rep_bufs && rep_bufs[s] ? rep_bufs[s] : vb ? gl_buffer(vb, GL_ARRAY_BUFFER) : 0;
     }
 }
 
-METHOD(dev_DrawPrimitive, 4) {
-    ray_collect(ARG(1), ARG(2), ARG(3), 0);  /* the free camera's wall test (d3d8_ray.c) */
+static void do_draw(uint32_t prim, uint32_t start, uint32_t count) {
     uintptr_t base[16];
     GLuint bufs[16];
     stream_bases(base, bufs);
     draw_setup(base, bufs, 0);
-    glDrawArrays(prim_mode(ARG(1)), ARG(2), prim_verts(ARG(1), ARG(3)));
+    glDrawArrays(prim_mode(prim), start, prim_verts(prim, count));
+}
+METHOD(dev_DrawPrimitive, 4) {
+    ray_collect(ARG(1), ARG(2), ARG(3), 0);  /* the free camera's wall test (d3d8_ray.c) */
+    RecOp *o = rec_op(OP_DRAW);
+    if (o) { o->a[0] = ARG(1), o->a[1] = ARG(2), o->a[2] = ARG(3); o->persp = rec_persp(); rec_streams(o, 0); }
+    do_draw(ARG(1), ARG(2), ARG(3));
     return 0;
 }
 
-METHOD(dev_DrawIndexedPrimitive, 6) {
+static void do_draw_idx(uint32_t prim, uint32_t start_idx, uint32_t count) {
     Res *ib = res_of(dev->ib);
-    if (!ib) return D3DERR_INVALIDCALL;
-    ray_collect(ARG(1), ARG(4), ARG(5), 1);
+    if (!ib) return;
     uintptr_t base[16];
     GLuint bufs[16];
     stream_bases(base, bufs);
@@ -1014,15 +1171,22 @@ METHOD(dev_DrawIndexedPrimitive, 6) {
     for (int s = 0; s < 16; s++) base[s] = (uintptr_t)dev->base_vertex * dev->stride[s];
 #endif
     draw_setup(base, bufs, 0);
-    gls_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, gl_buffer(ib, GL_ELEMENT_ARRAY_BUFFER));
+    gls_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, rep_ib ? rep_ib : gl_buffer(ib, GL_ELEMENT_ARRAY_BUFFER));
     int is32 = ib->fmt == FMT_INDEX32;
 #ifdef SH2_GLES
-    glDrawElements(prim_mode(ARG(1)), prim_verts(ARG(1), ARG(5)), is32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT,
-                   (void *)(uintptr_t)(ARG(4) * (is32 ? 4 : 2)));
+    glDrawElements(prim_mode(prim), prim_verts(prim, count), is32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT,
+                   (void *)(uintptr_t)(start_idx * (is32 ? 4 : 2)));
 #else
-    glDrawElementsBaseVertex(prim_mode(ARG(1)), prim_verts(ARG(1), ARG(5)), is32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT,
-                             (void *)(uintptr_t)(ARG(4) * (is32 ? 4 : 2)), dev->base_vertex);
+    glDrawElementsBaseVertex(prim_mode(prim), prim_verts(prim, count), is32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT,
+                             (void *)(uintptr_t)(start_idx * (is32 ? 4 : 2)), dev->base_vertex);
 #endif
+}
+METHOD(dev_DrawIndexedPrimitive, 6) {
+    if (!res_of(dev->ib)) return D3DERR_INVALIDCALL;
+    ray_collect(ARG(1), ARG(4), ARG(5), 1);
+    RecOp *o = rec_op(OP_DRAW_IDX);
+    if (o) { o->a[0] = ARG(1), o->a[1] = ARG(4), o->a[2] = ARG(5); o->persp = rec_persp(); rec_streams(o, 1); }
+    do_draw_idx(ARG(1), ARG(4), ARG(5));
     return 0;
 }
 
@@ -1047,35 +1211,88 @@ static uintptr_t ring_put(Ring *r, GLenum target, const void *data, uint32_t byt
     return off;
 }
 static Ring vring, iring;
-static uintptr_t up_upload(uint32_t data, uint32_t bytes) {
-    vring.buf = dev->stream_buf;
-    return ring_put(&vring, GL_ARRAY_BUFFER, GPTR(data), bytes);
-}
-METHOD(dev_DrawPrimitiveUP, 5) {
-    uint32_t n = prim_verts(ARG(1), ARG(2)), stride = ARG(4);
+static void do_draw_up(uint32_t prim, uint32_t count, const void *data, uint32_t stride) {
+    uint32_t n = prim_verts(prim, count);
     uintptr_t base[16] = {0};
     GLuint bufs[16] = {dev->stream_buf};
-    base[0] = up_upload(ARG(3), n * stride);
+    vring.buf = dev->stream_buf;
+    base[0] = ring_put(&vring, GL_ARRAY_BUFFER, data, n * stride);
     draw_setup(base, bufs, stride);
-    glDrawArrays(prim_mode(ARG(1)), 0, n);
+    glDrawArrays(prim_mode(prim), 0, n);
+}
+METHOD(dev_DrawPrimitiveUP, 5) {
+    uint32_t bytes = prim_verts(ARG(1), ARG(2)) * ARG(4);
+    RecOp *o = rec_op(OP_DRAW_UP);
+    if (o) {
+        o->a[0] = ARG(1), o->a[1] = ARG(2), o->a[2] = ARG(4); o->persp = rec_persp();
+        o->data = malloc(bytes); memcpy(o->data, GPTR(ARG(3)), bytes);
+    }
+    do_draw_up(ARG(1), ARG(2), GPTR(ARG(3)), ARG(4));
     if (dev->stream[0]) res_release(dev->stream[0]);
     dev->stream[0] = 0;
     return 0;
 }
-METHOD(dev_DrawIndexedPrimitiveUP, 9) {
-    uint32_t nidx = prim_verts(ARG(1), ARG(4)), isz = ARG(6) == FMT_INDEX32 ? 4 : 2, stride = ARG(8);
+static void do_draw_idx_up(uint32_t prim, uint32_t nverts, uint32_t count, const void *idx, uint32_t isz,
+                           const void *data, uint32_t stride) {
+    uint32_t nidx = prim_verts(prim, count);
     uintptr_t base[16] = {0};
     GLuint bufs[16] = {dev->stream_buf};
-    base[0] = up_upload(ARG(7), (ARG(2) + ARG(3)) * stride);
+    vring.buf = dev->stream_buf;
+    base[0] = ring_put(&vring, GL_ARRAY_BUFFER, data, nverts * stride);
     draw_setup(base, bufs, stride);
     iring.buf = dev->index_buf;
-    uintptr_t ioff = ring_put(&iring, GL_ELEMENT_ARRAY_BUFFER, GPTR(ARG(5)), nidx * isz);
-    glDrawElements(prim_mode(ARG(1)), nidx, isz == 4 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT, (void *)ioff);
+    uintptr_t ioff = ring_put(&iring, GL_ELEMENT_ARRAY_BUFFER, idx, nidx * isz);
+    glDrawElements(prim_mode(prim), nidx, isz == 4 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT, (void *)ioff);
+}
+METHOD(dev_DrawIndexedPrimitiveUP, 9) {
+    uint32_t nidx = prim_verts(ARG(1), ARG(4)), isz = ARG(6) == FMT_INDEX32 ? 4 : 2, stride = ARG(8);
+    uint32_t nv = ARG(2) + ARG(3);
+    RecOp *o = rec_op(OP_DRAW_IDX_UP);
+    if (o) {
+        o->a[0] = ARG(1), o->a[1] = nv, o->a[2] = ARG(4), o->a[3] = isz, o->a[4] = stride; o->persp = rec_persp();
+        o->data = malloc(nv * stride); memcpy(o->data, GPTR(ARG(7)), nv * stride);
+        o->idx = malloc(nidx * isz); memcpy(o->idx, GPTR(ARG(5)), nidx * isz);
+    }
+    do_draw_idx_up(ARG(1), nv, ARG(4), GPTR(ARG(5)), isz, GPTR(ARG(7)), stride);
     if (dev->stream[0]) res_release(dev->stream[0]);
     dev->stream[0] = 0;
     if (dev->ib) res_release(dev->ib);
     dev->ib = 0;
     return 0;
+}
+
+/* Draws the recorded frame again (the game is held meanwhile), the main 3D pass's clip space times `clip`. The
+ * device's own state is put back afterwards, so the game carries on exactly where it was. The uniform generations
+ * are bumped at each restore: the programs hold the values of other states. */
+static void bump_gens(void) { dev->vsc_gen++, dev->psc_gen++, dev->xform_gen++, dev->texm_gen++, dev->mat_gen++; }
+void frame_replay(const float *clip) {
+    if (!rec.ready) return;
+    uint8_t *live = malloc(DEV_STATE);
+    memcpy(live, dev, DEV_STATE);
+    uint32_t live_pal = dev->cur_palette, bound_rt = ~0u, bound_ds = ~0u;
+    for (int i = 0; i < rec.n; i++) {
+        RecOp *o = &rec.ops[i];
+        memcpy(dev, o->state, DEV_STATE);
+        dev->cur_palette = o->palette;
+        bump_gens();
+        if (dev->rt != bound_rt || dev->ds != bound_ds) { res_bind_targets(); bound_rt = dev->rt, bound_ds = dev->ds; }
+        shader_set_freeze(o->persp ? clip : NULL);
+        rep_bufs = o->buf, rep_ib = o->ib;
+        switch (o->op) {
+        case OP_DRAW: do_draw(o->a[0], o->a[1], o->a[2]); break;
+        case OP_DRAW_IDX: do_draw_idx(o->a[0], o->a[1], o->a[2]); break;
+        case OP_DRAW_UP: do_draw_up(o->a[0], o->a[1], o->data, o->a[2]); break;
+        case OP_DRAW_IDX_UP: do_draw_idx_up(o->a[0], o->a[1], o->a[2], o->idx, o->a[3], o->data, o->a[4]); break;
+        case OP_CLEAR: do_clear(o->a[0], o->data, o->a[1], o->a[2], o->a[3], o->a[4]); break;
+        }
+    }
+    rep_bufs = NULL, rep_ib = 0;
+    shader_set_freeze(NULL);
+    memcpy(dev, live, DEV_STATE);
+    dev->cur_palette = live_pal;
+    bump_gens();
+    free(live);
+    res_bind_targets();
 }
 
 METHOD(dev_CreateVertexShader, 5) { MEM32(ARG(3)) = shader_create_vs(ARG(1), ARG(2)); return 0; }
