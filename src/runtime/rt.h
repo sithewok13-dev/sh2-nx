@@ -129,6 +129,8 @@ int game_pause_tap(float y480);               /* a tap on the pause menu: its ro
 void game_sixty_init(void);                   /* game/controls.c, from ee_init: the 60 fps variables at 30 */
 int game_frame_rate(void);                    /* game/controls.c: 60 or 30 */
 void game_set_frame_rate(int fps);           /* game/controls.c: 60 or 30 frames a second (0: the game's own) */
+void game_set_free_camera(int on);            /* game/ee.c: VIEW in the tray, FREE (the right stick's camera) */
+void pad_right_stick(float *x, float *y);    /* win32/dinput.c: the pad's right stick, -1..1 */
 int game_in_world(void);                      /* game/controls.c: James is in a room (not the title) */
 int game_flashlight_on(void);                 /* game/controls.c: 0 James has none yet, 1 off, 2 on */
 

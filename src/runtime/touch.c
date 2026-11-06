@@ -15,7 +15,8 @@
  *   top left     MAP, ITEMS, the flashlight (its picture lit while the light is on)
  *                                      top right  MENU, the FPS readout left of it, CAMERA (when on) further left
  *   MENU         a tap pauses (or skips: the pad's Back); held 0.45 s, the tray opens under it:
- *                SENS (the look speed), OPACITY, FPS, CAMERA, CHEAT, CONTROLS, and the app's version below
+ *                LOOK (the look speed), OPACITY, FPS, RATE, RES, CAMERA, CHEAT, CONTROLS, VIEW (FIXED: the game's
+ *                cameras; FREE: one behind James the look drag turns, game/ee.c), and the app's version below
  * Off play (game_screen, game/controls.c) the cluster and the stick hide:
  *   cutscenes and movies   nothing shows; a tap skips (the pad's Back)
  *   the pause menu         a tap on Resume, Save Game... picks it; the arrows, OK and BACK work it too
@@ -64,7 +65,7 @@ enum { B_FIRE, B_AIM, B_ACTION, B_LIGHT, B_MAP, B_ITEMS, B_MENU, B_CAMERA, B_CHE
 static const char *const btn_label[N_BTN] = {"FIRE", "AIM", "ACTION", "", "MAP", "ITEMS", "MENU", "CAMERA", "",
                                              "", "", "", "", "OK", "BACK"};
 static const int btn_cluster[N_BTN] = {1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};  /* in the right thumb's cluster: drags look */
-enum { T_SENS, T_OPACITY, T_FPS, T_RATE, T_RES, T_CAMERA, T_CHEAT, T_CONTROLS, N_TRAY };
+enum { T_SENS, T_OPACITY, T_FPS, T_RATE, T_RES, T_CAMERA, T_CHEAT, T_CONTROLS, T_VIEW, N_TRAY };
 
 static const float sens_steps[] = {0.5f, 0.75f, 1.0f};  /* SENS: the look stick's top speed */
 static const float opacity_steps[] = {1.0f, 0.8f, 0.6f, 0.4f, 0.2f};
@@ -97,7 +98,7 @@ static struct {
     float tap_x, tap_y;             /* where, in pixels */
     Uint32 tap_at;
     /* settings, kept in touch.cfg */
-    int sens, opacity, show_fps, camera, classic;
+    int sens, opacity, show_fps, camera, classic, view;  /* view: VIEW is FREE (game/ee.c's free camera) */
     int rate30, res, res_started;  /* RATE: 30 instead of 60; RES 0-2 (as the game started: it applies at launch) */
     int shot;                       /* CAMERA was tapped: touch_draw saves the frame */
     float fps;
@@ -112,8 +113,8 @@ static struct {
 static void save_settings(void) {
     FILE *f = fopen("touch.cfg", "w");
     if (!f) return;
-    fprintf(f, "look=%d\nopacity=%d\nfps=%d\ncamera=%d\nclassic=%d\nrate30=%d\nquality=%d\n", T.sens, T.opacity,
-            T.show_fps, T.camera, T.classic, T.rate30, T.res);
+    fprintf(f, "look=%d\nopacity=%d\nfps=%d\ncamera=%d\nclassic=%d\nrate30=%d\nquality=%d\nview=%d\n", T.sens, T.opacity,
+            T.show_fps, T.camera, T.classic, T.rate30, T.res, T.view);
     fclose(f);
 }
 static void load_settings(void) {
@@ -129,6 +130,7 @@ static void load_settings(void) {
         else if (sscanf(line, "rate30=%d", &v) == 1) T.rate30 = !!v;
         /* RES is stored as quality= (an older res= is ignored, so everyone starts on the cooler HIGH default) */
         else if (sscanf(line, "quality=%d", &v) == 1 && v >= 0 && v <= 2) T.res = v;
+        else if (sscanf(line, "view=%d", &v) == 1) T.view = !!v;
     }
     if (f) fclose(f);
 }
@@ -240,7 +242,7 @@ static void apply(void) {
             stick_tilt(dx, dy, LOOK_R, 0.05f, &tx, &ty);
             float m = hypotf(tx, ty) * sens_steps[T.sens];
             rx += tx * m, ry += ty * m;
-            pad[P_LT] = 1;  /* the game moves the camera only in its search view, held on the pad's LT */
+            if (!T.view) pad[P_LT] = 1;  /* the game moves the camera only in its search view, held on the pad's LT */
             break;
         }
         case F_BUTTON:
@@ -320,6 +322,7 @@ void touch_init(void) {
     pthread_mutexattr_destroy(&attr);
     load_settings();
     controls_set_classic(T.classic);
+    game_set_free_camera(T.view);
     game_set_frame_rate(T.rate30 ? 30 : 60);
     T.res_started = T.res;
     SDL_VirtualJoystickDesc d;
@@ -368,6 +371,7 @@ static void use_tray(int t) {
     case T_CAMERA: T.camera = !T.camera; T.tray = 0; break;
     case T_CHEAT: toggle_cheat(); T.tray = 0; break;
     case T_CONTROLS: T.classic = !T.classic; controls_set_classic(T.classic); break;
+    case T_VIEW: T.view = !T.view; game_set_free_camera(T.view); break;
     case T_RATE: T.rate30 = !T.rate30; game_set_frame_rate(T.rate30 ? 30 : 60); break;
     case T_RES: T.res = (T.res + 1) % 3; break;  /* the game's size is set as it starts: from the next launch */
     }
@@ -674,6 +678,7 @@ static void build(Uint32 now) {
             case T_CAMERA: snprintf(label, sizeof label, "CAM"); lit = T.camera; break;
             case T_CHEAT: snprintf(label, sizeof label, "CHEAT"); lit = cheat_get(); break;
             case T_CONTROLS: snprintf(label, sizeof label, "CTRL\n%s", T.classic ? "CLASSIC" : "MODERN"); break;
+            case T_VIEW: snprintf(label, sizeof label, "VIEW\n%s", T.view ? "FREE" : "FIXED"); lit = T.view; break;
             case T_RATE: snprintf(label, sizeof label, "RATE\n%d", T.rate30 ? 30 : 60); lit = !T.rate30; break;
             case T_RES: {
                 static const char *const names[] = {"FULL", "HIGH", "BAL"};

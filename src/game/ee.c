@@ -809,10 +809,77 @@ void sub_00455660(void) { uint32_t from = MEM32(g_esp); sub_00455660_gen(); save
 extern void sub_004567B0_gen(void);
 void sub_004567B0(void) { uint32_t from = MEM32(g_esp); sub_004567B0_gen(); save_log(0x004567B0, g_eax, g_edx, from); }
 
+/* ---- the free camera (VIEW in the touch tray: FREE) ----
+ * A camera behind James that the right stick (the touch controls' look drag) turns round him, in place of the
+ * room's fixed and scripted cameras. Silent Hill 2's camera is one object (0x1F811E0); each frame its update
+ * (sub_0051FA10) moves it on: its position at +0x5C (0x1F8123C) and the point it looks at at +0x98 (0x1F81278)
+ * (sub_0051AE60 aims from one to the other). Right after that update the free camera writes both, so the view, the
+ * fog and where "forward" is for walking all follow it. Only in play (no cutscene, movie, menu or fade: controls.c's
+ * game_screen); elsewhere, and with FIXED (the default), the game's cameras as made. Nothing stops it going through
+ * a wall yet: it stays close (1.9 m) so that is rare. The world is y down and in millimetres. */
+#define CAM_POS     0x01F8123Cu
+#define CAM_TARGET  0x01F81278u
+#define JAMES_PTR   0x01FB7C80u  /* +0x1C his position */
+#define FC_METRE    1000.0f
+
+static struct { int on, active; float yaw, pitch; Uint32 last; } FC = {.pitch = 0.25f};
+
+void game_set_free_camera(int on) {
+    if (FC.on != !!on) rt_log("camera: %s", on ? "free (the right stick)" : "the game's");
+    FC.on = !!on;
+}
+
+static void free_camera_update(void) {
+    uint32_t j = MEM32(JAMES_PTR);
+    int run = FC.on && game_screen() == SCREEN_PLAY && j >= 0x10000u && (uint64_t)j + 0x40 <= host_arena_bytes;
+    Uint32 now = SDL_GetTicks();
+    float dt = FC.last ? (now - FC.last) / 1000.0f : 0;
+    FC.last = now;
+    if (dt > 0.1f) dt = 0.1f;
+    if (!run) { FC.active = 0; return; }
+    float jx = MEMF(j + 0x1C), jy = MEMF(j + 0x20), jz = MEMF(j + 0x24);
+    if (!isfinite(jx) || !isfinite(jy) || !isfinite(jz)) { FC.active = 0; return; }
+    if (!FC.active) {  /* start where the game's camera was, seen from James */
+        float dx = MEMF(CAM_POS) - jx, dz = MEMF(CAM_POS + 8) - jz;
+        FC.yaw = (dx * dx + dz * dz > 1) ? atan2f(dx, dz) : 0;
+        FC.pitch = 0.25f;
+    }
+    float rx, ry;
+    pad_right_stick(&rx, &ry);
+    float sx = rx * fabsf(rx), sy = ry * fabsf(ry);
+    FC.yaw += sx * 1.8f * dt;
+    if (FC.yaw > (float)M_PI) FC.yaw -= 2 * (float)M_PI;
+    if (FC.yaw < -(float)M_PI) FC.yaw += 2 * (float)M_PI;
+    FC.pitch += sy * 1.35f * dt;  /* the stick down: the camera rises and looks down */
+    if (FC.pitch < -0.35f) FC.pitch = -0.35f;
+    if (FC.pitch > 1.1f) FC.pitch = 1.1f;
+    /* round a point at his shoulders, 1.9 m back, the camera a little to his right */
+    float d = 1.9f * FC_METRE, cp = cosf(FC.pitch), sp = sinf(FC.pitch);
+    float px = jx, py = jy - 1.45f * FC_METRE, pz = jz;
+    float right_x = cosf(FC.yaw), right_z = -sinf(FC.yaw), side = 0.3f * FC_METRE;
+    MEMF(CAM_POS) = px + sinf(FC.yaw) * cp * d + right_x * side;
+    MEMF(CAM_POS + 4) = py - sp * d;
+    MEMF(CAM_POS + 8) = pz + cosf(FC.yaw) * cp * d + right_z * side;
+    MEMF(CAM_TARGET) = px + right_x * side * 0.6f;
+    MEMF(CAM_TARGET + 4) = py + 0.1f * FC_METRE;
+    MEMF(CAM_TARGET + 8) = pz + right_z * side * 0.6f;
+    FC.active = 1;
+}
+
+/* The camera's update, once a frame: the free camera goes in after it. */
+extern void sub_0051FA10_gen(void);
+void sub_0051FA10(void) {
+    sub_0051FA10_gen();
+    uint32_t eax = g_eax;
+    free_camera_update();
+    g_eax = eax;
+}
+
 /* recomp_lookup_manual: every call the recompiler routed through the manual table lands here. */
 recomp_func_t ee_lookup_manual(uint32_t va) {
     switch (va) {
     case 0x00458060u: return sub_00458060;
+    case 0x0051FA10u: return sub_0051FA10;
     case 0x00534660u: return sub_00534660;
     case 0x00458760u: return sub_00458760;
     case 0x0045A6D0u: return sub_0045A6D0;

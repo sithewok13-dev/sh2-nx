@@ -535,3 +535,12 @@ WINAPI(DirectInput8Create, "DirectInput8Create", 5) {
     MEM32(ARG(3)) = com_new(com_vtable(di_vt, sizeof di_vt / sizeof *di_vt), 8);
     return 0;
 }
+
+/* The free camera (game/ee.c): the right stick, -1..1 (the pad in use: a controller, or the touch controls' pad). */
+void pad_right_stick(float *x, float *y) {
+    SDL_GameController *c = get_pad();
+    *x = c ? SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0f : 0;
+    *y = c ? SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0f : 0;
+    if (fabsf(*x) < 0.12f) *x = 0;  /* a resting stick's drift */
+    if (fabsf(*y) < 0.12f) *y = 0;
+}

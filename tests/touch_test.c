@@ -24,6 +24,8 @@ static int cheat, classic = -1, cursor;
 void cheat_set(int on) { cheat = on; }
 int cheat_get(void) { return cheat; }
 void controls_set_classic(int on) { classic = on; }
+static int free_cam;
+void game_set_free_camera(int on) { free_cam = on; }
 static int rate;
 void game_set_frame_rate(int fps) { rate = fps; }
 int game_screen(void) { return cursor; }  /* SCREEN_*: 0 play */
@@ -36,7 +38,7 @@ static int world = 1;
 int game_in_world(void) { return world; }
 
 enum { B_FIRE, B_AIM, B_ACTION, B_LIGHT, B_MAP, B_ITEMS, B_MENU, B_CAMERA, B_CHEAT, B_UP, B_DOWN, B_LEFT, B_RIGHT, B_OK, B_BACK };
-enum { T_SENS, T_OPACITY, T_FPS, T_RATE, T_RES, T_CAMERA, T_CHEAT, T_CONTROLS };
+enum { T_SENS, T_OPACITY, T_FPS, T_RATE, T_RES, T_CAMERA, T_CHEAT, T_CONTROLS, T_VIEW };
 
 static int W = 1280, H = 590, failures;
 static SDL_GameController *c;
@@ -488,6 +490,28 @@ int main(int argc, char **argv) {
     press(8, B_AIM);
     check("with a controller attached, touches press nothing", axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) == 0);
     check("and the other pad is not ours", !touch_is_virtual_pad(real));
+    /* VIEW: FREE, the look drag turns the free camera with the right stick, without the search view's LT */
+    SDL_Event gone;
+    SDL_zero(gone);
+    gone.type = SDL_CONTROLLERDEVICEREMOVED;
+    SDL_JoystickDetachVirtual(real);
+    touch_event(&gone);
+    finger(SDL_FINGERUP, 8, 0, 0);
+    float x, y;
+    press(34, B_MENU);
+    SDL_Delay(480); tick();
+    finger(SDL_FINGERUP, 34, 0, 0);
+    at(-T_VIEW - 1, &x, &y);
+    finger(SDL_FINGERDOWN, 35, x, y);
+    finger(SDL_FINGERUP, 35, x, y);
+    check("VIEW: FREE", free_cam == 1);
+    finger(SDL_FINGERDOWN, 38, 600, 300);  /* (closes the tray) */
+    finger(SDL_FINGERUP, 38, 600, 300);
+    finger(SDL_FINGERDOWN, 36, 900, 300);
+    finger(SDL_FINGERMOTION, 36, 960, 300);
+    check("free camera: a look drag is the right stick, no LT", axis(SDL_CONTROLLER_AXIS_RIGHTX) > 8000 &&
+                                                               axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT) == 0);
+    finger(SDL_FINGERUP, 36, 0, 0);
     remove("touch.cfg");
     printf(failures ? "%d FAILED\n" : "PASS\n", failures);
     return failures != 0;
