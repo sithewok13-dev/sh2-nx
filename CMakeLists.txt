@@ -33,7 +33,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   # both static, from tools/ios/build-deps.sh. The bundle is unsigned: SideStore, AltStore or Sideloadly sign it on install.
   set(SH2_IOS_DEPS "${CMAKE_SOURCE_DIR}/build/ios-deps" CACHE PATH "SDL2 and FFmpeg built for iOS (tools/ios/build-deps.sh)")
   enable_language(OBJC)
-  target_sources(sh2 PRIVATE src/runtime/ios_photos.m src/runtime/ios_angle.m)
+  target_sources(sh2 PRIVATE src/runtime/ios_photos.m src/runtime/ios_angle.m src/runtime/ios_build.m)
   target_compile_definitions(sh2 PRIVATE SH2_IOS SH2_GLES)
   target_include_directories(sh2 PRIVATE ${SH2_IOS_DEPS}/include)
   # ANGLE (OpenGL ES on Metal, tools/ios/build-angle.sh): its two frameworks go in the app's Frameworks folder and
@@ -65,7 +65,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(SH2_IOS_BUNDLE_ID "com.example.sh2-nx" CACHE STRING "The app's bundle identifier")
   set(SH2_IOS_VERSION "1.03")
   set(SH2_IOS_BUILD "1" CACHE STRING "The build number (CFBundleVersion): the cloud build passes its run number")
-  target_compile_definitions(sh2 PRIVATE SH2_VERSION_LABEL="${SH2_IOS_VERSION} (${SH2_IOS_BUILD})")
   configure_file(ios/Info.plist.in ${CMAKE_BINARY_DIR}/Info.plist @ONLY)
   set_target_properties(sh2 PROPERTIES
     OUTPUT_NAME SH2
