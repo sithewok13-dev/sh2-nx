@@ -29,9 +29,13 @@ int ios_gl_angle(void) { return angle_on; }
 
 static void *dl_lookup(const char *name, void *lib) { return dlsym(lib, name); }
 
-/* sh2e.ini's renderer=opengles: Apple's OpenGL ES even when ANGLE would start */
+#ifndef IOS_SETTINGS_INI
+#define IOS_SETTINGS_INI "sh2e.ini"  /* the settings file next to the game */
+#endif
+
+/* renderer=opengles in the settings: Apple's OpenGL ES even when ANGLE would start */
 static int ini_wants_apple(void) {
-    FILE *f = fopen("sh2e.ini", "r");
+    FILE *f = fopen(IOS_SETTINGS_INI, "r");
     char line[128], v[32];
     int apple = 0;
     while (f && fgets(line, sizeof line, f))
@@ -184,7 +188,7 @@ static int apple_open(void) {
 }
 
 int ios_gl_open(void) {
-    if (ini_wants_apple()) rt_log("GL: sh2e.ini asks for Apple's OpenGL ES (renderer=opengles)");
+    if (ini_wants_apple()) rt_log("GL: " IOS_SETTINGS_INI " asks for Apple's OpenGL ES (renderer=opengles)");
     else if (angle_open()) angle_on = 1;
     if (!angle_on && !apple_open()) return 0;
     rt_log("GL: drawing with %s: %s / %s", ios_gl_name(), glGetString(GL_RENDERER), glGetString(GL_VERSION));
