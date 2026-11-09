@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include "../runtime/host.h"
 #include <math.h>
+#include <time.h>
 
 Dev *dev;
 static uint32_t d3d_obj;
@@ -295,6 +296,11 @@ void gl_context_open(void) {
         return;
     }
 #ifdef SH2_GLES
+#ifdef SH2_IOS
+    /* ANGLE on Metal, else Apple's OpenGL ES (runtime/ios_angle.m) */
+    if (!ios_gl_open()) rt_fatal("no OpenGL ES 3.0 context");
+    ctx = ios_gl_current();
+#else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
@@ -304,6 +310,8 @@ void gl_context_open(void) {
     ctx = SDL_GL_CreateContext(rt_window);
     if (!ctx) rt_fatal("no OpenGL ES 3.0 context: %s", SDL_GetError());
     SDL_GL_SetSwapInterval(1);
+    gl_load();  /* the GL table, when built with one (SH2_GL_TABLE); nothing otherwise */
+#endif
     GLint n_ext = 0;
     glGetIntegerv(GL_NUM_EXTENSIONS, &n_ext);
     for (GLint i = 0; i < n_ext; i++)
@@ -497,6 +505,70 @@ void ee_frame(void);  /* src/game/ee.c: per-frame Enhanced Edition logic */
 static void rec_finish(void);
 static int rec_recording(void);
 
+/* ---- frame times for the log (always on iOS; SH2_PERF=1 elsewhere) ----
+ * Every 5 seconds of play (SH2_PERF=<seconds> elsewhere): the frames presented, and where each one's time went, from one Present to the next:
+ *   game           the game's own code (everything not below)
+ *   drawing        the D3D8 draw and clear calls, turned into GL calls (mostly the CPU handing GL its work)
+ *   present        the frame to the window: the blit, the touch overlay and the swap, which waits while the GPU
+ *                  or the screen is behind ("swap")
+ *   frame limiter  the game waiting for its next 30 or 60 Hz tick (Sleep)
+ * A frame over a second long (loading, the app in the background, the camera holding the game) starts the count
+ * over. */
+static int perf_on = -1;
+static uint64_t perf_period = 5000000000ull;  /* SH2_PERF=<seconds> sets it elsewhere */
+static uint64_t perf_draw_ns;
+static int perf_calls;
+static uint64_t perf_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+}
+#define PERF_DRAW(call) do { \
+        if (perf_on > 0) { uint64_t t0_ = perf_now(); call; perf_draw_ns += perf_now() - t0_; perf_calls++; } \
+        else { call; } \
+    } while (0)
+
+static void perf_frame(uint64_t present_start, uint64_t swap_start, uint64_t end) {
+    static uint64_t t_start, t_last, sum_draw, sum_present, sum_swap, sum_wait, sum_frame, worst;
+    static int frames, calls;
+    uint64_t draw = perf_draw_ns, wait = rt_sleep_ns;
+    int dc = perf_calls;
+    perf_draw_ns = 0, perf_calls = 0, rt_sleep_ns = 0;
+    uint64_t frame = t_last ? end - t_last : 0;
+    t_last = end;
+    if (!frame || frame > 1000000000ull) {  /* the first frame, or after a pause: start over */
+        t_start = end;
+        frames = calls = 0;
+        sum_draw = sum_present = sum_swap = sum_wait = sum_frame = worst = 0;
+        return;
+    }
+    frames++;
+    calls += dc;
+    sum_frame += frame;
+    sum_draw += draw;
+    sum_present += end - present_start;
+    sum_swap += end - swap_start;
+    sum_wait += wait;
+    if (frame > worst) worst = frame;
+    if (end - t_start < perf_period) return;
+    const double ms = 1e-6 / frames;
+    uint64_t rest = sum_draw + sum_present + sum_wait;
+#ifdef SH2_IOS
+    const char *gl = ios_gl_name();
+#elif defined(SH2_GLES)
+    const char *gl = "OpenGL ES";
+#else
+    const char *gl = "OpenGL";
+#endif
+    rt_log("frames: %.1f fps; per frame %.1f ms (worst %.1f): game %.1f, drawing %.1f (%d draw calls), "
+           "present %.1f (swap %.1f), frame limiter %.1f; %s",
+           frames * 1e9 / (end - t_start), sum_frame * ms, worst * 1e-6, (sum_frame > rest ? sum_frame - rest : 0) * ms,
+           sum_draw * ms, calls / frames, sum_present * ms, sum_swap * ms, sum_wait * ms, gl);
+    t_start = end;
+    frames = calls = 0;
+    sum_draw = sum_present = sum_swap = sum_wait = sum_frame = worst = 0;
+}
+
 /* The back buffer to the window, keeping the game's aspect ratio. */
 static void present_blit(void) {
     int ww, wh;
@@ -534,6 +606,16 @@ void frame_show(void) {
 }
 
 METHOD(dev_Present, 5) {
+    if (perf_on < 0) {
+#ifdef SH2_IOS
+        perf_on = 1;
+#else
+        const char *p = getenv("SH2_PERF");
+        perf_on = p != NULL;
+        if (p && atof(p) > 0) perf_period = (uint64_t)(atof(p) * 1e9);
+#endif
+    }
+    uint64_t present_start = perf_on ? perf_now() : 0;
     ray_frame_end();  /* this frame's world becomes the one the free camera tests against */
     ee_frame();
     if (rec_recording()) rec_finish();  /* the frame the camera asked for is whole */
@@ -569,7 +651,9 @@ METHOD(dev_Present, 5) {
 #ifdef SH2_IOS
     ios_frame_gate();  /* parks here while the app is in the background */
 #endif
+    uint64_t swap_start = perf_on ? perf_now() : 0;
     SDL_GL_SwapWindow(rt_window);
+    if (perf_on) perf_frame(present_start, swap_start, perf_now());
     static Uint64 stat_t0;
     static int stat_frames;
     if (stats && ++stat_frames == 120) {  /* debugging: FPS and guest heap */
@@ -661,7 +745,7 @@ static void do_clear(uint32_t n, const int32_t *rects, uint32_t flags, uint32_t 
 }
 METHOD(dev_Clear, 7) {
     rec_clear(ARG(1), ARG(2), ARG(3), ARG(4), ARG(5), ARG(6));
-    do_clear(ARG(1), ARG(1) && ARG(2) ? GPTR(ARG(2)) : NULL, ARG(3), ARG(4), ARG(5), ARG(6));
+    PERF_DRAW(do_clear(ARG(1), ARG(1) && ARG(2) ? GPTR(ARG(2)) : NULL, ARG(3), ARG(4), ARG(5), ARG(6)));
     return 0;
 }
 
@@ -1158,7 +1242,7 @@ METHOD(dev_DrawPrimitive, 4) {
     ray_collect(ARG(1), ARG(2), ARG(3), 0);  /* the free camera's wall test (d3d8_ray.c) */
     RecOp *o = rec_op(OP_DRAW);
     if (o) { o->a[0] = ARG(1), o->a[1] = ARG(2), o->a[2] = ARG(3); o->persp = rec_persp(); rec_streams(o, 0); }
-    do_draw(ARG(1), ARG(2), ARG(3));
+    PERF_DRAW(do_draw(ARG(1), ARG(2), ARG(3)));
     return 0;
 }
 
@@ -1188,7 +1272,7 @@ METHOD(dev_DrawIndexedPrimitive, 6) {
     ray_collect(ARG(1), ARG(4), ARG(5), 1);
     RecOp *o = rec_op(OP_DRAW_IDX);
     if (o) { o->a[0] = ARG(1), o->a[1] = ARG(4), o->a[2] = ARG(5); o->persp = rec_persp(); rec_streams(o, 1); }
-    do_draw_idx(ARG(1), ARG(4), ARG(5));
+    PERF_DRAW(do_draw_idx(ARG(1), ARG(4), ARG(5)));
     return 0;
 }
 
@@ -1229,7 +1313,7 @@ METHOD(dev_DrawPrimitiveUP, 5) {
         o->a[0] = ARG(1), o->a[1] = ARG(2), o->a[2] = ARG(4); o->persp = rec_persp();
         o->data = malloc(bytes); memcpy(o->data, GPTR(ARG(3)), bytes);
     }
-    do_draw_up(ARG(1), ARG(2), GPTR(ARG(3)), ARG(4));
+    PERF_DRAW(do_draw_up(ARG(1), ARG(2), GPTR(ARG(3)), ARG(4)));
     if (dev->stream[0]) res_release(dev->stream[0]);
     dev->stream[0] = 0;
     return 0;
@@ -1255,7 +1339,7 @@ METHOD(dev_DrawIndexedPrimitiveUP, 9) {
         o->data = malloc(nv * stride); memcpy(o->data, GPTR(ARG(7)), nv * stride);
         o->idx = malloc(nidx * isz); memcpy(o->idx, GPTR(ARG(5)), nidx * isz);
     }
-    do_draw_idx_up(ARG(1), nv, ARG(4), GPTR(ARG(5)), isz, GPTR(ARG(7)), stride);
+    PERF_DRAW(do_draw_idx_up(ARG(1), nv, ARG(4), GPTR(ARG(5)), isz, GPTR(ARG(7)), stride));
     if (dev->stream[0]) res_release(dev->stream[0]);
     dev->stream[0] = 0;
     if (dev->ib) res_release(dev->ib);

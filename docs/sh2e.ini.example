@@ -19,4 +19,5 @@ movie=1
 ; PreserveSoundsOnLoad=0 the game's own load and save sounds instead of sh2e/sound/extra/g_start.wav and
 ;                        save_sound.wav, which keep playing through the loading screen
 ; cores=1                every game thread on one core (fallback if the music ever loops)
+; renderer=opengles     iPhone/iPad: draw with Apple's OpenGL ES instead of ANGLE on Metal (to compare)
 ; log=1                  write sh2.log for bug reports (off by default; crashes always go to sh2-crash.log)

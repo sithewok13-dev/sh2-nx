@@ -441,8 +441,12 @@ WINAPI(SetThreadPriorityBoost, "SetThreadPriorityBoost", 2) { return 1; }
 /* Sleep(0) sleeps 0.1 ms rather than yielding: the game's frame limiters (0x4F6CE0 at
  * 30 Hz, 0x518AD0 at 60 Hz) spin on it until a QueryPerformanceCounter deadline, which otherwise
  * keeps two cores busy doing nothing. */
+static uint64_t now_ns(void);
+_Thread_local uint64_t rt_sleep_ns;
 WINAPI(Sleep, "Sleep", 1) {
+    uint64_t t0 = now_ns();
     usleep(ARG(0) ? ARG(0) * 1000u : 100);
+    rt_sleep_ns += now_ns() - t0;
     return 0;
 }
 
