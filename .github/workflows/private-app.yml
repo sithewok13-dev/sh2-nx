@@ -143,7 +143,7 @@ jobs:
         run: |
           cmake -S port -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-w \
             -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-            -DSH2_IOS_BUNDLE_ID="$BUNDLE_ID" -DSH2_IOS_BUILD="$((GITHUB_RUN_NUMBER + 100))" \
+            -DSH2_IOS_BUNDLE_ID="$BUNDLE_ID" -DSH2_IOS_BUILD="$GITHUB_RUN_NUMBER" \
             -DSH2_IOS_DEPS="$PWD/port/build/ios-deps" > build.log 2>&1 &&
           cmake --build build >> build.log 2>&1 || {
             echo "::error::the build failed; errors in the port's own sources (the whole log is in the private repo's build-logs release):"
@@ -153,8 +153,12 @@ jobs:
           # ANGLE is bundled, and the app does not link it or Apple's OpenGL ES's entry points (src/runtime/ios_angle.m)
           ls build/SH2.app/Frameworks/libEGL.framework/libEGL build/SH2.app/Frameworks/libGLESv2.framework/libGLESv2 > /dev/null
           if otool -L build/SH2.app/SH2 | grep -qE 'libEGL|libGLESv2'; then echo "::error::the app links ANGLE"; exit 1; fi
+          # the build stamp under the tray ("build 80 · Nov 9") and on the release's first line
+          day=$(date -u +%F); echo "SW_BUILD_DATE=$day" >> "$GITHUB_ENV"
+          /usr/libexec/PlistBuddy -c "Add :SWBuildNumber string $GITHUB_RUN_NUMBER" -c "Add :SWBuildDate string $day" \
+            build/SH2.app/Info.plist
           mkdir Payload && cp -R build/SH2.app Payload/ && zip -qr SH2.ipa Payload
-          echo "SH2.ipa: $(du -h SH2.ipa | cut -f1), build $((GITHUB_RUN_NUMBER + 100))"
+          echo "SH2.ipa: $(du -h SH2.ipa | cut -f1), build $GITHUB_RUN_NUMBER"
 
       - name: SH2.ipa to the private repo's "app" release
         env:
@@ -164,6 +168,11 @@ jobs:
           gh release view app -R "$REPO" >/dev/null 2>&1 || \
             gh release create app -R "$REPO" --title "App" --notes "Unsigned SH2.ipa: open it in Feather to sign and install it."
           gh release upload app SH2.ipa --clobber -R "$REPO"
+          # the builds page reads "Build N · YYYY-MM-DD" from the body's first line; the rest stays
+          gh release view app -R "$REPO" --json body --jq .body | sed -e '1{/^Build [0-9]* · /d;}' | sed -e '/./,$!d' > body.md
+          { printf 'Build %s · %s\n\n' "$GITHUB_RUN_NUMBER" "$SW_BUILD_DATE"; cat body.md; } > notes.md
+          gh release edit app -R "$REPO" --notes-file notes.md
+          head -1 notes.md
 
       - name: The logs to the private repo, if something failed
         if: failure()
@@ -178,4 +187,4 @@ jobs:
 
       - name: Nothing of the game left behind
         if: always()
-        run: rm -rf game zip-start.bin port/src/recomp/gen port/build/sh2pc* port/build/disasm port/build/recomp port/build/func_id port/build/abi port/build/*.json port/build/*.log build Payload SH2.ipa build.log regen.log
+        run: rm -rf game zip-start.bin port/src/recomp/gen port/build/sh2pc* port/build/disasm port/build/recomp port/build/func_id port/build/abi port/build/*.json port/build/*.log build Payload SH2.ipa build.log regen.log body.md notes.md
